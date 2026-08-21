@@ -2,7 +2,7 @@
 
 一個開放、可改造的多模態人形機器人 agent。機器人的**大腦與身體**以 ROS 2 節點跑在雲端一台 GPU 機器上;你的**筆電是它的眼、耳、嘴**;你的**瀏覽器是它的臉**。所有流量走同一條 SSH 通道。參考用例是**語音觸發的石頭剪刀布**(出拳與節拍同步)—— 它把整個迴路都逼出來:聽、看、想、說、動,而且全部要卡在一個硬實時的節拍上。
 
-程式碼是為了將來搬上真機而寫的:身體層對外只發 `/joint_states`,用的是真實人形機器人的關節名,所以把 MuJoCo 木偶換成硬體是**替換一個節點**,不是重寫。
+程式碼是為了將來搬上真機而寫的,而第六輪研究釐清了那到底需要什麼。虛擬與實體之間的接縫是一份 **DDS topic 契約,不是換一個節點**:`unitree_mujoco` 發 `rt/lowstate`、收 `rt/lowcmd`,與真的 Unitree G1 **位元組完全一致**,所以同一個 `hardware_interface::SystemInterface` 服務兩邊,切換收斂成兩個 xacro 參數。身體層目前還**不在**那個接縫上 —— 它在 render tick 上發 `/joint_states`,而這既是錯的**方向**(`/joint_states` 按 ROS 慣例是驅動器的回饋 topic,上真機會與 G1 driver 撞 topic),也慢了 4–43 倍。見 [`docs/research-round6-simreal-joint-mapping-2026-08-22.md`](docs/research-round6-simreal-joint-mapping-2026-08-22.md)。
 
 > 現狀:端到端可用的 demo(普通話 / 英文 / 粵語語音、開放詞彙場景描述、猜拳遊戲、講故事、可打斷的說話)。研究級,不是產品。設計脈絡見 `docs/`。
 
@@ -41,7 +41,7 @@ web/robot-view/  (瀏覽器)                 │      ├─ perception/ hand_no
 | 手 | `perception/hand_node.py` | MediaPipe Tasks HandLandmarker;猜拳分類器**刻意忽略拇指**(每個人擺法不同) |
 | 想 | `agent/agent_node.py` | Bedrock Converse、Claude Sonnet 5 global 推論設定檔;每輪附一張縮圖,支援開放詞彙的場景問答 |
 | 反射 | `game/game_node.py` | 機器人主導口令,判定窗 `[T−0.1 s, T+0.6 s]`;停止詞在**任何**狀態都生效;每局冷卻 |
-| 身體 | `body/body_node.py` | MuJoCo 運動學木偶(五指手),以 MJPEG 串到瀏覽器 |
+| 身體 | `body/body_node.py` | MuJoCo 運動學木偶(Dex3-1 三指手:拇指 3 自由度、食指 2、中指 2,單手 7 個),以 MJPEG 串到瀏覽器 |
 | 傳輸 | `daemon/main.c`、`gateway/ws_gateway.py` | 單一 WebSocket、二進位分幀;音訊優先於視訊,兩者都有流控 |
 
 ## 快速開始
@@ -76,7 +76,7 @@ open web/robot-view/index.html
 | `speech/`、`perception/`、`agent/`、`game/`、`body/`、`gateway/` | ROS 2 節點,一個節點一個關注點 |
 | `web/robot-view/` | 單頁「臉」:MJPEG 身體視圖 + 事件 HUD |
 | `infra/` | 開機供裝、環境安裝、行程監管(`run_ec2.sh` 用 pid 檔,**絕不**用 `pkill` 樣式) |
-| `docs/` | 設計記錄:五輪研究、day-0 延遲量測、demo 手冊、記憶與安全的設計批判 |
+| `docs/` | 設計記錄:六輪研究、day-0 延遲量測、demo 手冊、記憶與安全的設計批判 |
 
 ## 設計記錄
 
@@ -88,6 +88,7 @@ open web/robot-view/index.html
 - [`docs/research-round4-agent-brain-2026-08-21.md`](docs/research-round4-agent-brain-2026-08-21.md) —— 記憶 / 技能 / MCP-OAuth / 批判思維。重點:**沒有外部反饋的自我批判會實測降低準確率**,所以批判思維技能做成觸發式,而且只餵真實的外部證據。
 - [`docs/design-critique-memory-safety-2026-08-22.md`](docs/design-critique-memory-safety-2026-08-22.md) —— 對我們自己記憶設計的紅隊審視、情節記憶 schema、遺忘政策,以及分層的道德邊界安全架構。核心設計律:**LLM 記憶系統的安全性來自限制 schema,不是來自過濾文字。**
 - [`docs/research-round5-memory-safety-2026-08-22.md`](docs/research-round5-memory-safety-2026-08-22.md) —— 可行性一輪:用已驗證的數字回答上面那份批判留下的開放問題(鞏固成本、檢索延遲預算、「硬邊界必須在 LLM 之外」的已發表實證)。兩個決策被證據翻轉:本機 guard 模型是被**語言覆蓋**否決而不是顯存,salience 公式移除語音韻律項,因為從生物特徵推論情緒在 EU AI Act 下屬高風險。
+- [`docs/research-round6-simreal-joint-mapping-2026-08-22.md`](docs/research-round6-simreal-joint-mapping-2026-08-22.md) —— MuJoCo 木偶到底能不能一一對應地驅動實體人形?7 個主張家族、88 條對抗式驗證判決。重點:**虛擬與實體的接縫是一份 DDS topic 契約,不是一個插件**;肌肉/腱驅動這條路是關的(零個可購買且有開放介面的機型,而唯一嘗試商業化的團隊最後出貨的是齒輪驅動的關節空間致動器);以及**規劃能力與安全完全脫鉤** —— 最佳規劃模型只有 0.4% 產不出計劃,卻在 28.3% 的任務上產出**危險**計劃,所以普通的成功率監控對主要失效模式完全瞎眼。
 
 ## 安全姿態
 
