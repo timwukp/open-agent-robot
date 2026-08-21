@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>open-agent-robot — 虛擬機器人</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #101418; color: #d7dde3;
+         font: 14px/1.5 -apple-system, "PingFang TC", sans-serif;
+         display: flex; flex-direction: column; align-items: center; }
+  header { padding: 10px 0 4px; font-size: 17px; font-weight: 600; }
+  #stage { position: relative; }
+  #robot { max-width: 96vw; border-radius: 10px; background: #000;
+           box-shadow: 0 4px 24px rgba(0,0,0,.5); }
+  #hud { position: absolute; left: 12px; bottom: 12px; padding: 6px 12px;
+         background: rgba(10,14,18,.72); border-radius: 8px; font-size: 13px; }
+  #events { width: min(920px, 96vw); margin: 10px 0 24px; padding: 8px 12px;
+            background: #171d24; border-radius: 8px; min-height: 3.2em;
+            white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; }
+  .ok { color: #7bd88f; } .bad { color: #ff7b72; }
+</style>
+</head>
+<body>
+<header>open-agent-robot <span id="conn" class="bad">●</span></header>
+<div id="stage">
+  <img id="robot" src="http://localhost:8080/stream" width="1280" height="720"
+       alt="robot view (MJPEG via SSH tunnel)">
+  <div id="hud">等待事件…</div>
+</div>
+<div id="events"></div>
+<script>
+// Game/event feed from ws_gateway (through the same SSH tunnel).
+const hud = document.getElementById('hud');
+const log = document.getElementById('events');
+const conn = document.getElementById('conn');
+const img = document.getElementById('robot');
+img.addEventListener('load', () => { conn.className = 'ok'; });
+img.addEventListener('error', () => {
+  conn.className = 'bad';
+  setTimeout(() => { img.src = 'http://localhost:8080/stream?' + Date.now(); }, 2000);
+});
+function connectEvents() {
+  const ws = new WebSocket('ws://localhost:8765/events'); // browser event feed
+  ws.onmessage = (e) => {
+    try {
+      const ev = JSON.parse(e.data);
+      hud.textContent = ev.hud ?? hud.textContent;
+      if (ev.text)   // hud-only updates (e.g. live hand feedback) skip the log
+        log.textContent = (`[${new Date().toLocaleTimeString()}] ${ev.text}\n`
+                           + log.textContent).split('\n').slice(0, 60).join('\n');
+    } catch { /* non-JSON keepalive */ }
+  };
+  ws.onclose = () => setTimeout(connectEvents, 2000);
+}
+connectEvents();
+</script>
+</body>
+</html>
