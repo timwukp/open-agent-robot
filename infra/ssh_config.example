@@ -1,0 +1,17 @@
+# open-agent-robot — single tunnel entry bundling every forwarded port.
+# Usage:  ssh -F infra/ssh_config robot        (or autossh -M 0 -F ... robot)
+# Keep-alive settings make the tunnel survive brief network blips; for the
+# demo run it under autossh so a dropped tunnel recovers in seconds.
+Host robot
+    HostName <EC2_PUBLIC_IP>
+    User ubuntu
+    IdentityFile <PATH_TO_KEY>
+    ServerAliveInterval 5
+    ServerAliveCountMax 3
+    ExitOnForwardFailure yes
+    # MJPEG robot view (body_node)
+    LocalForward 8080 127.0.0.1:8080
+    # ws_gateway: daemon audio/video/events + browser event feed
+    LocalForward 8765 127.0.0.1:8765
+    # Foxglove bridge (debug, optional)
+    LocalForward 8766 127.0.0.1:8766
