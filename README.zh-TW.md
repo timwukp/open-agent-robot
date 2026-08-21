@@ -76,7 +76,7 @@ open web/robot-view/index.html
 | `speech/`、`perception/`、`agent/`、`game/`、`body/`、`gateway/` | ROS 2 節點,一個節點一個關注點 |
 | `web/robot-view/` | 單頁「臉」:MJPEG 身體視圖 + 事件 HUD |
 | `infra/` | 開機供裝、環境安裝、行程監管(`run_ec2.sh` 用 pid 檔,**絕不**用 `pkill` 樣式) |
-| `docs/` | 設計記錄:四輪研究、day-0 延遲量測、demo 手冊、記憶與安全的設計批判 |
+| `docs/` | 設計記錄:五輪研究、day-0 延遲量測、demo 手冊、記憶與安全的設計批判 |
 
 ## 設計記錄
 
@@ -87,6 +87,7 @@ open web/robot-view/index.html
 - [`docs/research-round3-feasibility-2026-08-20.md`](docs/research-round3-feasibility-2026-08-20.md) —— 可行性與硬體預算
 - [`docs/research-round4-agent-brain-2026-08-21.md`](docs/research-round4-agent-brain-2026-08-21.md) —— 記憶 / 技能 / MCP-OAuth / 批判思維。重點:**沒有外部反饋的自我批判會實測降低準確率**,所以批判思維技能做成觸發式,而且只餵真實的外部證據。
 - [`docs/design-critique-memory-safety-2026-08-22.md`](docs/design-critique-memory-safety-2026-08-22.md) —— 對我們自己記憶設計的紅隊審視、情節記憶 schema、遺忘政策,以及分層的道德邊界安全架構。核心設計律:**LLM 記憶系統的安全性來自限制 schema,不是來自過濾文字。**
+- [`docs/research-round5-memory-safety-2026-08-22.md`](docs/research-round5-memory-safety-2026-08-22.md) —— 可行性一輪:用已驗證的數字回答上面那份批判留下的開放問題(鞏固成本、檢索延遲預算、「硬邊界必須在 LLM 之外」的已發表實證)。兩個決策被證據翻轉:本機 guard 模型是被**語言覆蓋**否決而不是顯存,salience 公式移除語音韻律項,因為從生物特徵推論情緒在 EU AI Act 下屬高風險。
 
 ## 安全姿態
 

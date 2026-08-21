@@ -109,11 +109,14 @@ Episodic 是主軸,因為它是**唯一能回答「我們之間發生過什麼�
   "t_start": 1755871391.2, "t_end": 1755871460.8,
   "kind": "conversation|game|observation|teaching|story",
   "participants": ["user:primary"],   // 身分是「聲稱」,不是驗證過的(見 §3.3)
-  "place": "desk",                     // 粗粒度
+  "place": "desk",                     // 必填:where(粗粒度即可)
+  "why": {"goal": "user_requested_joke", "trigger": "utterance|vision_event|schedule"},
+                                       // 必填:why —— goal 必須是封閉枚舉,不是自由文字
   "summary": "使用者要求用粵語講笑話,機器人講了,使用者笑了",
   "transcript_ref": "events.jsonl#1204-1231",   // 指向熱層,不複製原文
   "salience": 0.62,                    // 見下
-  "affect": {"user": "amused", "conf": 0.4},    // 粗;用途受限,見 §3.6
+  "affect": {"user": "amused", "conf": 0.4, "from": "text"},
+                                       // 只從 ASR 文字推;不從聲學/臉部推(見下)
   "outcome": "success|fail|abandoned",
   "entities": [{"name": "粵語", "rel": "topic"}],
   "provenance": "heard|seen|inferred|told",     // 我聽到的 / 我看到的 / 我推論的 / 他告訴我的
@@ -123,13 +126,18 @@ Episodic 是主軸,因為它是**唯一能回答「我們之間發生過什麼�
 }
 ```
 
-三個欄位是被第四輪完全漏掉、但決定系統性質的:**provenance**(區分「聽到 / 看到 / 推論」——沒有它,幻覺與事實同權)、**retention**(遺忘是資料模型的一部分,不是清理腳本)、**consent**(durable 需要理由)。
+`place` 與 `why` 是第五輪研究補上的:Tulving 立場論文(arXiv 2502.06975)把 episodic 記憶定義為綁定 **when / where / why**,而原版 schema 只填了 when 與 who。`why.goal` 同時是**檢索的第二把鑰匙**(結構化精確命中,不必依賴摘要的餘弦相似度)與**安全邊界的一部分**——所以它必須是封閉枚舉,理由見 §3.5。
+
+另三個欄位是被第四輪完全漏掉、但決定系統性質的:**provenance**(區分「聽到 / 看到 / 推論」——沒有它,幻覺與事實同權)、**retention**(遺忘是資料模型的一部分,不是清理腳本)、**consent**(durable 需要理由)。
 
 `salience` 的計算(刻意不用 LLM 打分,便宜且可解釋):
 ```
-salience = 0.4·情緒強度(語音能量/笑聲/明確評價) + 0.3·新穎度(1 - 與既有 episode 的最大餘弦相似度)
+salience = 0.4·明確評價(ASR 文字:「好好笑」「我不喜歡」) + 0.3·新穎度(1 - 與既有 episode 的最大餘弦相似度)
          + 0.2·使用者主動要求記住 + 0.1·互動長度(封頂)
+         [+ 韻律項:語音能量/笑聲 —— 預設關閉,見下]
 ```
+
+**為什麼韻律項預設關閉(第五輪研究改的)**:EU AI Act Annex III 1(c) 把「從**生物特徵**資料推論情感」列為高風險,而語音韻律與臉部符合 Art 3(39)/(34) 的生物特徵定義;**純文字情感分析不在範圍內**。Art 50 已於 2026-08-02 生效,高風險義務經 Reg (EU) 2026/1744 延後至 2027-12-02。所以情緒訊號改從 ASR **文字**取(「好好笑」是文字,笑聲是聲學),韻律項做成預設關閉的獨立開關。這不是合規表演——它同時讓 `affect` 欄位的濫用面(§3.6 的操控風險)縮小,是同一個決定的兩個好處。
 
 ### 2.5 遺忘政策(默認遺忘,記住需要理由)
 
@@ -243,11 +251,17 @@ routine / skill_level / topic_seen / story_told / object_owned
 
 ---
 
-## 5. 待第五輪研究驗證的項目(誠實邊界)
+## 5. 第五輪研究的結果(逐項結案)
 
-1. EM-LLM 的 surprise 邊界偵測是否真的需要 logprobs(若需要 → 我們的確定性切分是唯一選擇)
-2. Bedrock Guardrails 的 p95 延遲與每請求價格;本機 guard 模型(Llama Guard 級)在 T4 上與 YOLO/TTS 搶 VRAM 的實際餘量
-3. 嵌入模型選型:中英雙語 + 授權 + CPU/GPU 推論時間(bge-m3 / multilingual-e5 / gte-multilingual)
-4. 記憶投毒的已發表攻擊與緩解(MINJA 等)是否支持「封閉謂詞」這條防線
-5. EU AI Act 對情感推論與 AI 身分揭露的具體義務(我們的 `affect` 欄位是否落在受限範圍)
-6. episodic→semantic 鞏固的觸發策略在真實系統裡怎麼做(夜間批量 vs 重要性門檻 vs 每 N 事件反思)
+完整證據與來源見 [`research-round5-memory-safety-2026-08-22.md`](research-round5-memory-safety-2026-08-22.md)。
+
+| 原始待驗證項 | 結果 |
+|---|---|
+| 1. EM-LLM 的 surprise 是否真的需要 logprobs | **確認**。surprise 需要模型自身 token log-probabilities,邊界精修需要每層 attention keys(`refine_from_layer: 20`)——Converse 兩者都不給。另有「切分可交給 LLM 自己做」一說被 **0-3 否決**。→ §2.2 的確定性切分**定案**,不再是妥協 |
+| 2. Guardrails 價格與延遲 / 本機 guard 模型的 VRAM 餘量 | 見第五輪 §9(第一輪抽取到了但從未投票,已補做針對性驗證) |
+| 3. 嵌入模型選型 | 同上,見第五輪 §9 |
+| 4. 記憶投毒的已發表攻擊與緩解 | MINJA(NeurIPS 2025)是 **query-only** 威脅模型:不需要寫入權限,正常提問即可植入。已驗證的緩解只有 schema 級的一種(Letta `read_only` 區塊)——與 §3.5 的封閉謂詞是同一思路的兩層。數字見第五輪 §9 |
+| 5. EU AI Act 對情感推論與身分揭露的義務 | 見第五輪 §9 |
+| 6. episodic→semantic 鞏固的觸發策略 | **有數字了**:Generative Agents 重要性累加 > 150 觸發反思 = **每天 2–3 次**;sleep-time compute 證明離線鞏固在等準確率下省 ~5× test-time 計算;A-MEM 的每次寫入演化 **~1,200 tokens/op**(拒絕)。→ 夜間批量 + 門檻兜底,預算 2–4 次呼叫/天 |
+
+**第五輪改寫了本文件的三處:**§2.4 schema 加入必填的 `place` 與 `why`(Tulving 的 when/where/why);§2.5 的 Ebbinghaus 衰減被降級為**未證實**的預設值(沒有任何論文做過 decay vs no-decay 的 ablation),A/B 必須含「不刪除但改善排序」對照組;§3.0 的「硬邊界在 LLM 之外」取得外部實證(RoboGuard,RA-L 2026:最壞情況越獄下不安全計畫執行率 >92% → <3%),並因此**新增一條**:把規則落地的那個組件也不能吃使用者輸入。
