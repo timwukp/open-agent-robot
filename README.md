@@ -7,9 +7,15 @@ tunnel, and the reference use case — a voice-triggered game of
 rock-paper-scissors with beat-synchronised throws — exercises the whole loop:
 hearing, seeing, reasoning, speaking and moving, all under a hard real-time beat.
 
-The software is written to move to a physical robot later: the body layer speaks
-`/joint_states` against a real humanoid's joint names, so swapping the MuJoCo
-puppet for hardware is a node substitution, not a rewrite.
+The software is meant to move to a physical robot later, and Round 6 pins down
+what that actually takes. The sim/real seam is a **DDS topic contract, not a node
+swap**: `unitree_mujoco` publishes `rt/lowstate` and subscribes `rt/lowcmd`
+byte-identically to a real Unitree G1, so one `hardware_interface::SystemInterface`
+serves both and the switch collapses to two xacro parameters. The body layer does
+not sit at that seam yet — it publishes `/joint_states` at the render tick, which
+is both the wrong *direction* (`/joint_states` is by convention the driver's
+feedback topic, so it would collide with a real G1 driver) and 4–43× too slow.
+See [`docs/research-round6-simreal-joint-mapping-2026-08-22.md`](docs/research-round6-simreal-joint-mapping-2026-08-22.md).
 
 > Status: working end-to-end demo (Mandarin / English / Cantonese speech,
 > open-vocabulary scene description, RPS game, storytelling, interruptible
@@ -67,7 +73,7 @@ web/robot-view/  (browser)               │      ├─ perception/ hand_node  
 | Hands | `perception/hand_node.py` | MediaPipe Tasks HandLandmarker; the RPS classifier deliberately ignores the thumb (people hold it differently) |
 | Reasoning | `agent/agent_node.py` | Bedrock Converse, Claude Sonnet 5 global inference profile, one downscaled camera frame attached per turn for open-vocabulary scene questions |
 | Reflexes | `game/game_node.py` | Robot-led chant, resolve window `[T−0.1 s, T+0.6 s]`, stop words honoured in **any** state, per-game cooldown |
-| Body | `body/body_node.py` | MuJoCo kinematic puppet of a humanoid with five-finger hands, streamed to the browser as MJPEG |
+| Body | `body/body_node.py` | MuJoCo kinematic puppet of a humanoid with three-fingered Dex3-1 hands (thumb 3 DOF, index 2, middle 2 — 7 per hand), streamed to the browser as MJPEG |
 | Transport | `daemon/main.c`, `gateway/ws_gateway.py` | One WebSocket, binary framed; audio prioritised over video, both flow-controlled |
 
 ## Quick start
@@ -103,7 +109,7 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 | `speech/`, `perception/`, `agent/`, `game/`, `body/`, `gateway/` | ROS 2 nodes, one concern each |
 | `web/robot-view/` | Single-page face: MJPEG body view + event HUD |
 | `infra/` | Provisioning, instance setup, process supervision (`run_ec2.sh` uses pid files, never `pkill` patterns) |
-| `docs/` | Design record: five research rounds, the day-0 latency measurements, the demo runbook, and the memory/safety design critique |
+| `docs/` | Design record: seven research rounds (raw evidence under `docs/evidence/`), the day-0 latency measurements, the demo runbook, and the memory/safety design critique |
 
 ## Design record
 
@@ -117,6 +123,8 @@ went **against** intuition:
 - [`docs/research-round4-agent-brain-2026-08-21.md`](docs/research-round4-agent-brain-2026-08-21.md) — memory / skills / MCP-OAuth / critical thinking. Notable: **self-critique without external feedback measurably lowers accuracy**, so the critical-thinking skill is trigger-gated and only ever fed real external evidence.
 - [`docs/design-critique-memory-safety-2026-08-22.md`](docs/design-critique-memory-safety-2026-08-22.md) — a red-team review of our own memory design, an episodic-memory schema, a forgetting policy, and the layered moral-boundary safety architecture. Core design law: **the safety of an LLM memory system comes from restricting the schema, not from filtering text.**
 - [`docs/research-round5-memory-safety-2026-08-22.md`](docs/research-round5-memory-safety-2026-08-22.md) — the feasibility round that answered the critique's open questions with verified numbers: consolidation costs, retrieval latency budgets, and the published evidence for keeping hard boundaries outside the model. Two decisions were reversed by evidence — a local guard model is ruled out on **language coverage** rather than VRAM, and the salience formula drops voice-prosody signals because inferring emotion from biometric data is high-risk under the EU AI Act.
+- [`docs/research-round6-simreal-joint-mapping-2026-08-22.md`](docs/research-round6-simreal-joint-mapping-2026-08-22.md) — can the MuJoCo puppet actually drive a physical humanoid one-to-one? 88 adversarially verified verdicts across 7 claim families. Notable: **the sim/real seam is a DDS topic contract, not a plugin**; muscle/tendon actuation is a closed door (zero purchasable units with an open interface, and the one team that tried to commercialise it shipped geared joint-space actuators instead); and **planning ability is decoupled from safety** — the best planner fails to plan on 0.4% of tasks but produces *dangerous* plans on 28.3%, so ordinary success monitoring is blind to the dominant failure mode.
+- [`docs/research-round7-rl-and-two-tier-2026-08-22.md`](docs/research-round7-rl-and-two-tier-2026-08-22.md) — should this agent use reinforcement learning, and should a small local model share the work with the remote one? Two parallel research workflows, 213 agent calls, 245 claims recovered (raw evidence in [`docs/evidence/round7/`](docs/evidence/round7/)). Both answers are **no, for derived reasons rather than enumerated ones**: RL is admissible exactly where **the reward is measured by a non-LLM sensor**, which rules out every intervention point we had in mind; and the two-tier idea survives **only as latency masking**, not as routing — a router needs a mechanism cheaper than the big model that reliably knows "I don't know", and that mechanism is refuted along the whole chain (a routing plateau of +2.13 pp for 10× the data, an entropy router that escalated on 0.0% of TextWorld episodes, zero certifiable model pairs at a 10% risk bound). Notable and actionable **today**, independent of RL: asking a model "are you sure?" drops accuracy by up to **27%** and makes it wrongly admit a mistake 42–98% of the time, with correct→incorrect flips outnumbering the reverse; and hard schema-constrained decoding can be **100% schema-valid while executable accuracy falls 91.5% → 48.0%**, which structural validators catch 0% of — so reason free, constrain late. This round also corrects two of our own earlier claims (§8).
 
 ## Security posture
 
