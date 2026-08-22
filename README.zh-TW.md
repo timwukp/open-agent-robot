@@ -53,10 +53,13 @@ web/robot-view/  (瀏覽器)                 │      ├─ perception/ hand_no
 #    加密根碟、實例角色只給 Bedrock invoke)。可重複執行。
 infra/provision.sh            # 產生 infra/ssh_config 與 infra/local.env(皆已 git-ignore)
 
-# 2. 在機器上安裝整套環境(驅動、ROS 2 Jazzy、模型)
-infra/setup-ec2.sh            # 兩個階段,見腳本檔頭
+# 2. 在機器上安裝整套環境。三個階段,在機器上自己跑:
+#      ./setup-ec2.sh driver   NVIDIA 驅動,跑完要重開機
+#      ./setup-ec2.sh stack    ROS 2 Jazzy + Python 環境 + G1 身體模型
+#      ./setup-ec2.sh yue      粵語 TTS 的獨立 venv(不需要粵語可略過)
+infra/setup-ec2.sh            # 見腳本檔頭
 
-# 3. 啟動機器人的大腦與身體
+# 3. 啟動機器人的大腦與身體(節點表裡的每一個,含 `yue`)
 ssh -F infra/ssh_config robot 'open-agent-robot/infra/run_ec2.sh start-all'
 
 # 4. 開通道、編譯並啟動 daemon、打開它的臉
@@ -101,7 +104,7 @@ open web/robot-view/index.html
 
 我們的程式碼是 MIT(見 [`LICENSE`](LICENSE))。
 
-**但有一個依賴不是**:YOLO26 檢測器透過 Ultralytics 使用,而 Ultralytics 是 **AGPL-3.0**。本 repo 是研究 demo,且檢測節點是可選的(`infra/run_ec2.sh` 單獨啟動它)。若你要做任何商業用途,請取得 Ultralytics 授權,或把 `perception/detect_node.py` 換成寬鬆授權的檢測器 —— 該節點對外只發一個 `/detections` JSON 主題,可以孤立替換。
+**但有一個依賴不是**:YOLO26 檢測器透過 Ultralytics 使用,而 Ultralytics 是 **AGPL-3.0**。本 repo 是研究 demo。請注意 `infra/run_ec2.sh start-all` **確實會**啟動檢測節點 —— 授權論證靠的是隔離而不是「預設不開」:`perception/detect_node.py` 對外只發一個 `/detections` JSON 主題,不碰別的東西,所以能單獨替換或整個拿掉。若你要做任何商業用途,請取得 Ultralytics 授權,或把那一個節點換成寬鬆授權的檢測器。
 
 模型權重各有自己的授權(Kokoro、CosyVoice、FunASR、MediaPipe),再散布前請逐一確認。
 

@@ -1,0 +1,21 @@
+# open-agent-robot — paths that infra/run_ec2.sh executes but the repo does NOT contain.
+#
+# Every such path needs a *producer*: something in this tree that creates it, and
+# that a deploy stage actually invokes. Without this manifest the deploy guard has
+# only two bad options — permanently red-flag legitimately-fetched third-party
+# assets, or carry an excuse comment about where it need not look, which is
+# exactly where the next missing-deploy-path defect hides.
+#
+# Columns (tab-separated):
+#   path       the token as run_ec2.sh would execute it, with $HOME left symbolic
+#   producer   repo-relative script that creates the path
+#   evidence   a substring of `path` that must literally appear in `producer`
+#              (this is what ties the row to the producer instead of trusting it)
+#   invoked_by <deploy script>:<stage> that runs the producer; the stage must
+#              exist in that script's command dispatch
+#
+# Checked by infra/check_deploy.sh. A row whose path is no longer executed is a
+# finding too: a stale row would silently excuse a path that nothing runs.
+body/assets/unitree_g1/scene_with_hands.xml	body/fetch_assets.sh	unitree_g1	infra/setup-ec2.sh:stack
+$HOME/venv/bin/python	infra/setup-ec2.sh	venv/bin	infra/setup-ec2.sh:stack
+$HOME/venv-yue/bin/python	infra/setup-ec2.sh	venv-yue/bin	infra/setup-ec2.sh:yue
