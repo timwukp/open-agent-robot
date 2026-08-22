@@ -86,10 +86,13 @@ macOS with Homebrew, and `brew install ffmpeg libwebsockets`.
 #    encrypted root, instance role scoped to Bedrock invoke). Idempotent.
 infra/provision.sh            # writes infra/ssh_config + infra/local.env (git-ignored)
 
-# 2. Install the stack on the instance (drivers, ROS 2 Jazzy, models)
-infra/setup-ec2.sh            # see the script header for the two stages
+# 2. Install the stack on the instance. Three stages, run on the instance itself:
+#      ./setup-ec2.sh driver   NVIDIA driver, then reboot
+#      ./setup-ec2.sh stack    ROS 2 Jazzy + Python env + the G1 body model
+#      ./setup-ec2.sh yue      Cantonese TTS venv (skip if you don't need Cantonese)
+infra/setup-ec2.sh            # see the script header
 
-# 3. Start the robot's brain and body
+# 3. Start the robot's brain and body (every node in the table, `yue` included)
 ssh -F infra/ssh_config robot 'open-agent-robot/infra/run_ec2.sh start-all'
 
 # 4. Open the tunnel, build and run the daemon, open the face
@@ -137,11 +140,12 @@ went **against** intuition:
 Our code is MIT (see [`LICENSE`](LICENSE)).
 
 **One dependency is not**: the YOLO26 detector is used through Ultralytics,
-which is **AGPL-3.0**. This repository is a research demo, and the detection
-node is optional (`infra/run_ec2.sh` starts it separately). If you intend
-anything commercial, either obtain an Ultralytics licence or swap
-`perception/detect_node.py` for a permissively licensed detector — the node
-publishes a plain `/detections` JSON topic, so it is replaceable in isolation.
+which is **AGPL-3.0**. This repository is a research demo. Note that
+`infra/run_ec2.sh start-all` *does* start the detection node — the licence
+argument is isolation, not opt-in: `perception/detect_node.py` publishes a plain
+`/detections` JSON topic and touches nothing else, so it can be replaced or
+dropped on its own. If you intend anything commercial, either obtain an
+Ultralytics licence or swap that one node for a permissively licensed detector.
 
 Model weights carry their own licences (Kokoro, CosyVoice, FunASR, MediaPipe):
 check each before redistributing.

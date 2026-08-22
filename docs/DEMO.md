@@ -22,12 +22,40 @@ infra/provision.sh          # idempotent: also re-points the SG at your current 
   `infra/ssh_config` and `infra/local.env`.
 - SSH timeouts later usually mean *your* IP rotated → re-run `provision.sh`.
 
-## Step 1 — robot nodes on EC2 (skip if `status` shows 7× UP)
+## Step 0.5 — one-time install on the instance (skip on an instance you already set up)
+
+Run **on the instance**, and note it is three stages, not two — the third is what
+makes Cantonese work at all:
+
 ```bash
-ssh -F infra/ssh_config robot 'open-agent-robot/infra/run_ec2.sh start-all'
-ssh -F infra/ssh_config robot 'open-agent-robot/infra/run_ec2.sh status'
-# expect: gateway/body/asr/tts/hand/agent/game all UP
+ssh -F infra/ssh_config robot
+cd open-agent-robot
+./infra/setup-ec2.sh driver     # NVIDIA driver; then `sudo reboot` and reconnect
+./infra/setup-ec2.sh stack      # ROS 2 Jazzy + ~/venv + the G1 body model
+                                #   (ends by running body/fetch_assets.sh — without it
+                                #    body_node dies: the G1 XML is third-party and is
+                                #    deliberately not committed)
+./infra/setup-ec2.sh yue        # ~/venv-yue for Cantonese TTS; skip only if you
+                                #   never speak Cantonese to it. The first Cantonese
+                                #   sentence then downloads ~12 GB of weights.
 ```
+
+Verify before starting anything: `./infra/check_deploy.sh` must print `0 findings`.
+It fails if the runner would launch a path no install stage produces.
+
+## Step 1 — robot nodes on EC2 (skip if `status` shows 9× UP)
+```bash
+ssh -F infra/ssh_config -o ClearAllForwardings=yes robot \
+    'open-agent-robot/infra/run_ec2.sh start-all'
+ssh -F infra/ssh_config -o ClearAllForwardings=yes robot \
+    'open-agent-robot/infra/run_ec2.sh status'
+# expect all 9 UP: gateway body asr tts hand detect yue agent game
+```
+`-o ClearAllForwardings=yes` is needed on every *command* invocation once the Step 2
+tunnel exists: `infra/ssh_config` carries the 8080/8765 forwards on the `robot` host,
+so a second connection tries to bind them again and dies with
+`bind [127.0.0.1]:8080: Address already in use … Could not request local forwarding`
+— which looks like a broken instance and is only a port collision with yourself.
 
 ## Step 2 — tunnel (MacBook, project root: ~/Downloads/open-agent-robot)
 ```bash
@@ -73,9 +101,12 @@ Silent mode (--no-audio): ask Claude to trigger a round remotely
 | Symptom | Check / fix |
 |---|---|
 | SSH timeout | Your IP rotated → re-run `infra/provision.sh` |
+| `bind [127.0.0.1]:8080: Address already in use` / `Could not request local forwarding` | Not a broken instance — your own Step 2 tunnel already holds those ports. Add `-o ClearAllForwardings=yes` to the command invocation |
+| Cantonese reply is silent or the tts log shows `ConnectionRefusedError` | The `yue` node is down. `tts_node._sentences_yue` posts to `127.0.0.1:8901` with **no fallback**, so Cantonese fails hard rather than degrading to Mandarin. `run_ec2.sh start yue`; if `~/venv-yue` is missing, `setup-ec2.sh yue` was never run |
+| `body` node dies at startup on `--xml … scene_with_hands.xml` | The G1 model was never fetched → `body/fetch_assets.sh` (run by `setup-ec2.sh stack`) |
 | Browser dot red / no robot | Tunnel dead → re-run Step 2 |
 | Robot doesn't hear you | Daemon terminal shows `[audio] … up`? ASR heard-log: `ssh -F infra/ssh_config robot 'grep heard: /tmp/oar/asr.log | tail -3'` |
-| 「看到什麼」answers empty | detect node down? `run_ec2.sh status`; probe: `~/venv/bin/python /tmp/probe3.py` (ros2 CLI topic echo may false-negative from discovery cache — trust direct subscription) |
+| 「看到什麼」answers empty | detect node down? `run_ec2.sh status`, then `run_ec2.sh logs detect`. To confirm the topic is live, subscribe from a short python script inside `~/venv` rather than with `ros2 topic echo` — the CLI can false-negative from a stale discovery cache, so an empty echo is not evidence of an empty topic |
 | Game won't stop | say 停/stop — hard reflex in game_node, 15 s cooldown; if stuck: `ros2 topic pub --once /game/cmd std_msgs/String "data: stop"` |
 | 「沒看到手」 every round | Camera fps: daemon terminal `[cam] read pkt N` should tick ~every 2 s (60 pkts); hand live view: `ros2 topic echo /hand_pose` on EC2 |
 | Crackling speech | You're on a pre-10:13 binary → `cd daemon && make`, restart daemon |
@@ -83,8 +114,13 @@ Silent mode (--no-audio): ask Claude to trigger a round remotely
 
 ## Shutdown (stop paying $0.736/hr)
 ```bash
-# Mac: Ctrl-C the daemon; kill the tunnel:
-pkill -f "ssh -F infra/ssh_config"
+# Mac: Ctrl-C the daemon, and Ctrl-C the tunnel in its own terminal.
+#   Do NOT reach for `pkill -f "ssh -F infra/ssh_config"`: a pattern kill can match
+#   any shell whose command line contains the string, including the one running it.
+#   Same rule as run_ec2.sh — kill a pid you own, never a pattern. If you need the
+#   tunnel scriptable, start it with a control socket and close that:
+#     ssh -F infra/ssh_config -M -S /tmp/oar-tunnel.sock -N -f robot
+#     ssh -S /tmp/oar-tunnel.sock -O exit robot
 # EC2 (state survives a stop; nodes need start-all after next boot):
 source infra/local.env
 aws ec2 stop-instances --instance-ids "$OAR_INSTANCE_ID" --region "$OAR_REGION"

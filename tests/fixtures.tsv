@@ -1,0 +1,18 @@
+# open-agent-robot — frozen fixture manifest (test item T-J3).
+#
+# Columns (tab-separated):  path <TAB> min_bytes <TAB> min_lines <TAB> sha256
+#   path       relative to tests/fixtures/
+#   min_bytes  size floor — a truncated fixture makes a replay test pass on no data
+#   min_lines  line floor — the same defect one level up (a file of one long line)
+#   sha256     the exact bytes that were annotated; an in-place edit of the same
+#              length is invisible to both floors and only this catches it
+#
+# Verified by tests/test_fixture_manifest.py. Regenerate rows with
+#   python tests/fixture_manifest.py --freeze
+# which prints and never writes: a verifier that can rewrite its own expectations
+# turns a corrupted fixture into a new baseline.
+#
+# Data fixtures arrive in stage S4 (30 eval queries, hand-annotated episode
+# boundaries, the red-team set). The row below keeps the machinery live until then —
+# an empty manifest over an empty directory is vacuously green.
+README.md	1335	23	c0a721b3b59c50157fc84db4d1bee5d62efdb9236a7a566afb867e4090b54b10
