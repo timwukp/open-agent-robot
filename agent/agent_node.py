@@ -7,15 +7,29 @@ Never on the game's beat-critical path (plan D2). Handles:
 
 Scene awareness: keeps the latest YOLO26 detections (/detections JSON from
 perception) and injects them into the system context, so “你看到什麼?” works.
+
+Skills: skills/loader.py decides — with a frozen phrase table, never by asking the
+model — whether a skill's instructions belong in this turn. Only the tiny L1 index
+(name + one sentence per skill) is resident in the system prompt; the body is
+attached to the user turn as data, and the model pulls deeper files through the
+read_skill_file tool. See skills/loader.py for why the gate is not an LLM judge.
 """
 from __future__ import annotations
 import json
+import sys
 import threading
+from pathlib import Path
 
 import boto3
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+
+# run_ec2.sh launches this file directly, so sys.path[0] is agent/, not the repo
+# root — without this, `from skills import loader` fails only on the robot.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from skills import loader  # noqa: E402
 
 # Sonnet 5 via the global cross-region profile (user-directed switch from
 # Haiku 4.5 after runaway-game incident: stronger instruction following).
@@ -52,6 +66,14 @@ class AgentNode(Node):
             config=Config(read_timeout=25, connect_timeout=5,
                           retries={"max_attempts": 2}))
         self.scene = "[]"
+        # A malformed skill directory must not cost the robot its voice: log and
+        # carry on with no skills, which is exactly the pre-S1 behaviour.
+        try:
+            self.skills = loader.discover()
+        except loader.SkillError as exc:
+            self.get_logger().error(f"skills disabled: {exc}")
+            self.skills = ()
+        self.system_text = SYSTEM + loader.l1_index(self.skills)
         self.history: list[dict] = []
         self.busy = threading.Lock()
         self.pub_say = self.create_publisher(String, "/speech/say", 10)
@@ -76,7 +98,9 @@ class AgentNode(Node):
                                  lambda m: setattr(self, "tts_active", m.data), 10)
         self.create_subscription(String, "/game/events_out", self.on_game_event, 10)
         self._last_asr = ""
-        self.get_logger().info(f"agent ready ({MODEL_ID}, {REGION})")
+        self.get_logger().info(
+            f"agent ready ({MODEL_ID}, {REGION}), skills: "
+            f"{[s.name for s in self.skills] or 'none'}")
 
     def on_det(self, msg: String):
         self.scene = msg.data
@@ -162,11 +186,57 @@ class AgentNode(Node):
                 messages[-1] = {"role": "user", "content": [
                     {"image": {"format": "jpeg", "source": {"bytes": jpeg}}},
                     {"text": f"<scene>{self.scene}</scene>\n{text}"}]}
-            resp = self.brt.converse(
-                modelId=MODEL_ID,
-                system=[{"text": SYSTEM}],
-                messages=messages,
-                inferenceConfig={"maxTokens": 1000})  # stories need room; temperature deprecated on Claude 5
+            # deterministic skill gate: the phrase table decides, then the body
+            # rides along in THIS turn only. Deliberately not appended to
+            # self.history, so a skill costs tokens on the turns that need it
+            # instead of on every turn after.
+            hits = loader.match(text, self.skills)
+            for skill in hits:
+                try:
+                    messages[-1]["content"].append({"text": loader.skill_block(skill)})
+                except loader.SkillError as exc:
+                    self.get_logger().error(f"skill {skill.name} not loaded: {exc}")
+            if hits:
+                self.get_logger().info(f"skills active: {[s.name for s in hits]}")
+
+            kwargs = {
+                "modelId": MODEL_ID,
+                "system": [{"text": self.system_text}],
+                "messages": messages,
+                # stories need room; temperature deprecated on Claude 5
+                "inferenceConfig": {"maxTokens": 1000},
+            }
+            if hits:
+                kwargs["toolConfig"] = loader.TOOL_CONFIG
+
+            resp = self.brt.converse(**kwargs)
+            # Bounded: a model that keeps asking for files would otherwise hold the
+            # conversation open indefinitely. On the last hop the tool is dropped,
+            # which forces an answer instead of a truncated turn.
+            for hop in range(loader.MAX_TOOL_HOPS):
+                if resp.get("stopReason") != "tool_use":
+                    break
+                out = resp["output"]["message"]
+                messages.append(out)
+                results = []
+                for block in out.get("content", []):
+                    use = block.get("toolUse")
+                    if not use:
+                        continue
+                    body, ok = loader.run_tool(use)
+                    self.get_logger().info(
+                        f"read_skill_file {use.get('input')} -> "
+                        f"{'ok' if ok else body[:80]}")
+                    results.append({"toolResult": {
+                        "toolUseId": use["toolUseId"],
+                        "content": [{"text": body}],
+                        "status": "success" if ok else "error"}})
+                if not results:
+                    break
+                messages.append({"role": "user", "content": results})
+                if hop == loader.MAX_TOOL_HOPS - 1:
+                    kwargs.pop("toolConfig", None)
+                resp = self.brt.converse(**kwargs)
             # Claude 5 may prepend reasoning blocks — join every text block
             reply = "".join(b.get("text", "")
                             for b in resp["output"]["message"]["content"]).strip()

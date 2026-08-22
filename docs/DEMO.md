@@ -97,6 +97,18 @@ Say to the laptop (normal pace): **「我們玩石頭剪刀布」** or
 Silent mode (--no-audio): ask Claude to trigger a round remotely
 (`ros2 topic pub --once /game/cmd std_msgs/String "data: start"` on EC2).
 
+## Step 6 — skills (optional)
+Say **「幫我紅隊一下這個計劃…」**, **「這個說法可靠嗎」**, or
+**"is there a logical fallacy in this"**. A deterministic phrase table in
+`skills/loader.py` recognises the utterance and attaches the critical-thinking
+skill to that turn only. `run_ec2.sh logs agent` shows
+`skills active: ['critical-thinking']` and a `read_skill_file …` line for each
+deeper file the model pulls.
+
+Nothing happens for a phrase that is not in the table — that is the design, not a
+bug. `skills/critical-thinking/triggers.tsv` is the full list, and
+[`skills/README.md`](../skills/README.md) explains how to add to it.
+
 ## Troubleshooting (fast checks)
 | Symptom | Check / fix |
 |---|---|

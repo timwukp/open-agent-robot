@@ -1,0 +1,47 @@
+# critical-thinking — deterministic L2 gate (test item T-I2).
+#
+# ADDED BY open-agent-robot; not part of the upstream MIT skill. Every other file
+# in this directory is the vendored original, unmodified.
+#
+# This table is the whole gate. skills/loader.py loads the SKILL.md body into a
+# turn if and only if one of these phrases appears in the user's utterance. The
+# model is never asked whether to load — see the module docstring for why.
+#
+# Matching (skills/loader.py:_pattern):
+#   * a phrase with no latin letters matches as a plain substring, because
+#     Chinese is written without spaces;
+#   * a phrase that starts/ends with a latin word character gets \b there, so
+#     `bias` does not fire on `unbiased`.
+# Both cases are pinned by tests/fixtures/skill_triggers.tsv.
+#
+# Adding a phrase is cheap; adding one that over-fires is not. Every new phrase
+# should come with a near-miss row in that fixture proving what it does NOT match.
+#
+# Honest boundary: the `yue` rows were written by a non-native speaker from the
+# Cantonese forms used elsewhere in this repo. They are a starting set, not
+# validated coverage.
+#
+# Columns (tab-separated):  phrase <TAB> lang   (lang ∈ zh | yue | en)
+分析論證	zh
+論證有沒有問題	zh
+這個說法可靠嗎	zh
+邏輯有問題	zh
+謬誤	zh
+偏誤	zh
+認知偏見	zh
+質疑假設	zh
+證據夠不夠	zh
+證據充分	zh
+根本原因	zh
+其他解釋	zh
+紅隊	zh
+有冇其他解釋	yue
+呢個講法可靠咩	yue
+有冇邏輯	yue
+argument analysis	en
+red-team	en
+red team	en
+logical fallacy	en
+root cause	en
+bias	en
+question the assumptions	en
