@@ -466,6 +466,17 @@ def _looks_like_id(value: object) -> bool:
     return episode_id(int(digits)) == value
 
 
+def is_episode_id(value: object) -> bool:
+    """Public: is `value` an id this module could have minted?
+
+    A three-line delegation so that no other module has to restate the prefix or the
+    width. `memory/recall.py` validates every episode reference it returns, and a
+    second copy of `value.startswith("ep-")` there would be a second definition of
+    the id format — the one that keeps passing after this one changes.
+    """
+    return _looks_like_id(value)
+
+
 def provenance_findings(facts: Iterable[Fact], episode_ids: Collection[str]) -> list[str]:
     """Everything wrong with `facts` as provenance (design item T-C3). [] = clean.
 

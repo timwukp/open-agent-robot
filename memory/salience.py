@@ -163,16 +163,31 @@ def _clamp(x: float) -> float:
     return 0.0 if x < 0.0 else (1.0 if x > 1.0 else float(x))
 
 
-def _bigrams(text: str) -> set[str]:
-    """Character bigrams of `text` with whitespace removed.
+def bigrams(text: str) -> tuple[str, ...]:
+    """Character bigrams of `text` with whitespace removed, **in order, with repeats**.
 
     Whitespace goes because English and 中文 disagree about it and novelty should
-    not: 「我 好 累」 and 「我好累」 are the same turn.
+    not: 「我 好 累」 and 「我好累」 are the same turn. Character bigrams rather than
+    words because 中文 needs a segmenter and the 粵語 segmenters are worse; the whole
+    point is one tokenisation rule for the whole system, so this is the only place
+    that decides what a term is.
+
+    Ordered and repeating, because the two callers need different things from the
+    same rule and only one of them can be served by a set: `novelty()` wants the
+    Jaccard of two *sets*, while `recall.bm25` needs term frequency — and a set says
+    「累」 appears once in 「好累好累好累」. A second tokeniser in `recall.py` would
+    have made the retrieval bucket split by which module produced the term, which is
+    the defect §S4.5 refused when it declined to normalise `why.goal`.
     """
     packed = "".join(text.split())
     if len(packed) < 2:
-        return {packed} if packed else set()
-    return {packed[i:i + 2] for i in range(len(packed) - 1)}
+        return (packed,) if packed else ()
+    return tuple(packed[i:i + 2] for i in range(len(packed) - 1))
+
+
+def _bigrams(text: str) -> set[str]:
+    """The bigram *set*, for the Jaccard in `novelty`. One creator: `bigrams`."""
+    return set(bigrams(text))
 
 
 def novelty(text: str, seen: Iterable[str] = ()) -> float:
