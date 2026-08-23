@@ -123,6 +123,45 @@ def _mut_unwired_new_entrypoint(root: Path) -> None:
     )
 
 
+def _mut_unguarded_import_time_script(root: Path) -> None:
+    """The hole the old grep left: a script with NO `__main__` guard.
+
+    `.push/push.py` was this shape — it created branches and pushed blobs at import
+    time — and `grep -rl '^if __name__ =='` never made it a candidate, so check 8
+    reported a clean tree while flagging its guarded sibling in the same directory.
+    An unguarded script is the *worse* case, not an exempt one.
+    """
+    (root / ".push" / "push_everything.py").write_text(
+        '"""A pusher that runs the moment it is imported."""\n'
+        "import subprocess\n\n"
+        'BRANCH = "main"\n'
+        'subprocess.run(["gh", "api", "user"])\n'
+    )
+
+
+def _narrow_discovery_to_main_guards(root: Path) -> None:
+    """Not a MUTANTS entry: this one is *supposed* to lose the finding, which is the
+    hole itself. Used by the differential test below, where losing it is the assertion.
+    """
+    patch(root, "infra/entrypoints.py",
+          "        if is_sys_path_bootstrap(node):\n            continue\n",
+          "        continue\n")
+
+
+def _mut_bootstrap_exclusion_removed(root: Path) -> None:
+    """The other direction: sys.path bootstraps counted as work, so library modules
+    start demanding a deploy path. safety/guard.py is the file that surfaces."""
+    patch(root, "infra/entrypoints.py",
+          "    if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):\n"
+          "        return False\n",
+          "    return False\n")
+
+
+def _mut_discovery_step_cannot_run(root: Path) -> None:
+    """A discovery step that crashes must not let the guard report clean."""
+    (root / "infra" / "entrypoints.py").write_text("raise SystemExit(9)\n")
+
+
 def _mut_launched_node_declared_standalone(root: Path) -> None:
     """A contradictory exemption: claimed standalone while the runner launches it."""
     with (root / STANDALONE_TSV).open("a") as fh:
@@ -156,6 +195,11 @@ MUTANTS = {
     "launched_node_declared_standalone": (_mut_launched_node_declared_standalone,
                                           "contradictory declaration"),
     "stale_standalone_exemption": (_mut_stale_standalone_exemption, "stale exemption"),
+    "unguarded_import_time_script": (_mut_unguarded_import_time_script,
+                                     ".push/push_everything.py"),
+    "bootstrap_exclusion_removed": (_mut_bootstrap_exclusion_removed, "safety/guard.py"),
+    "discovery_step_cannot_run": (_mut_discovery_step_cannot_run,
+                                  "could not classify the tree"),
 }
 
 
@@ -177,6 +221,33 @@ def test_every_named_mutant_is_killed(name: str, repo_copy: Path) -> None:
         f"mutant {name!r} was killed, but not by the check it targets "
         f"(expected a finding mentioning {expected!r}):\n{failures}"
     )
+
+
+# ------------------------------------------------------ the hole, stated differentially
+
+
+@pytest.mark.mutation
+def test_the_old_grep_discovery_loses_the_finding_the_new_one_makes(repo_copy: Path) -> None:
+    """The shipped hole, as a difference rather than as a story.
+
+    Same tree, same unguarded script, two discoveries. The AST discovery reports it;
+    the guards-only discovery reports a clean tree. Asserting both directions is what
+    makes `infra/entrypoints.py` load-bearing instead of decorative — a check that
+    would find the same things either way is not worth the file.
+    """
+    _mut_unguarded_import_time_script(repo_copy)
+    found = run_guard(repo_copy)
+    assert guard_findings(found) >= 1
+    assert ".push/push_everything.py" in found.stderr
+
+    _narrow_discovery_to_main_guards(repo_copy)
+    lost = run_guard(repo_copy)
+    assert guard_findings(lost) == 0, (
+        "with import-time analysis removed the guard must go quiet — if it still "
+        "reports the script, something other than this discovery is catching it and "
+        "the new file is not what closed the hole"
+    )
+    assert lost.returncode == 0, lost.stdout + lost.stderr
 
 
 # ------------------------------------------------------- the guard's own failure mode

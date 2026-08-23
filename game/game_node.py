@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from game import opponent as opp   # noqa: E402
 from game import rps               # noqa: E402
+from safety import guard           # noqa: E402
 
 BEATS = {"zh": (5, "石頭、剪刀、布!"), "en": (3, "rock, paper, scissors!")}
 # NOTE: invite/nohand texts must NOT contain the trigger phrase 石頭剪刀布 —
@@ -58,9 +59,12 @@ CLIPS_EN = {"win": "Yes! I win!", "lose": "Oh no, you win!", "tie": "It's a tie!
             "invite": "Let's play rock paper scissors! Throw on my count!",
             "nohand": "I couldn't see your hand — let's try again!",
             "stopped": "OK, game over! Call me when you want to play again."}
-# Deterministic STOP reflex — never routed through the LLM (plan D2 discipline)
-STOP_WORDS = ("停", "不玩", "别玩", "別玩", "暫停", "暂停", "结束", "結束",
-              "stop", "enough", "quit", "no more")
+# The STOP word list is NOT here. It is safety.guard.STOP_WORDS, reached through
+# guard.stop_requested() below — a pure function of the utterance, so the reflex
+# structurally cannot depend on which state this node happens to be in (T-D1).
+# A copy here would be the WINS/BEATS defect again, and its observable form for a
+# reflex is worse than a tidiness problem: a robot that stops in one state and not
+# another. tests/test_guard.py derives the creator set from the whole tree.
 BEAT_KEYWORDS = ("石頭剪刀布", "石头剪刀布", "rock paper scissors", "剪刀石頭布")
 # There is no WINS table here any more. It used to be
 # {("rock","scissors"),("scissors","paper"),("paper","rock")}, a second encoding of
@@ -160,8 +164,9 @@ class GameNode(Node):
 
     def on_asr(self, msg: String):
         text = json.loads(msg.data).get("text", "").lower()
-        # STOP is a hard reflex: works in ANY state, checked before anything else
-        if any(w in text for w in STOP_WORDS):
+        # STOP is a hard reflex: checked before this method reads self.state or the
+        # cooldown at all, and decided by a function that cannot see either.
+        if guard.stop_requested(text):
             self.stop_game()
             return
         if self.state != "idle" or time.monotonic() < self.cooldown_until:

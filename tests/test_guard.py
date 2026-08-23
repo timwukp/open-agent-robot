@@ -24,20 +24,26 @@ fail differently: `\\w+` cannot express a parameterised command like
 *are* expressible. Widening the pattern kills the first assertion while leaving the
 second green, which is exactly why they are not one test.
 
-**Not covered here: T-D1 and the runtime half of T-D2.** Those need the stop reflex
-to be callable without rclpy, which means moving `STOP_WORDS` out of
-`game/game_node.py` — a node file inside the open PR stack. Copying the tuple into
-`safety/` instead would recreate the `WINS`/`BEATS` defect (two encodings of one
-relation, nothing forcing agreement), and for a stop reflex the observable form of
-that defect is a robot that stops in one state and not another. So the duplicate is
-not created, and `test_the_stop_reflex_has_exactly_one_creator` holds the position
-until the wiring lands: it derives every module-level `STOP_WORDS` in the tree and
-requires there to be exactly one.
+**T-D1 without a list of states.** The plan asked for the stop reflex to be tested
+in every state, with the state set derived from `game_node.py` rather than typed
+out. Deriving the set is still done (in `tests/test_game_wiring.py`), but it is no
+longer what carries the property: `STOP_WORDS` moved out of the node into
+`safety.guard.stop_requested`, whose only parameter is the text. A function that
+cannot see the state cannot behave differently in one, so the per-state matrix
+would be four copies of one assertion. What is worth testing instead is smaller
+and sharper — that the node calls it *before* reading `self.state`, and that the
+tuple has exactly one creator in the whole tree.
+
+The move also makes T-D2's runtime half reachable without rclpy: the reflex can be
+called with `boto3` replaced by an object that raises on attribute access, which a
+static import scan cannot substitute for (a lazy `import boto3` inside a function
+is invisible to it).
 """
 from __future__ import annotations
 
 import ast
 import importlib.util
+import inspect
 import random
 import re
 import shutil
@@ -681,14 +687,12 @@ def test_the_say_request_carries_no_amplitude_the_model_could_ask_for() -> None:
 
 
 def test_the_stop_reflex_has_exactly_one_creator() -> None:
-    """Holds the position for T-D1/T-D2 until the wiring PR.
+    """T-D1, the half that a per-state test cannot give you.
 
-    `STOP_WORDS` stays in `game/game_node.py` for now because collapsing it into a
-    pure module means editing a node that is inside the open PR stack. What must
-    not happen in the meantime is a second copy appearing in `safety/`: two
-    encodings of one reflex is the `WINS`/`BEATS` defect, and for a stop reflex its
-    observable form is a robot that stops in one state and not another. Derived
-    from the tree, with a floor, so a file added tomorrow is also scanned.
+    Two encodings of one reflex is the `WINS`/`BEATS` defect, and for a stop reflex
+    its observable form is worse than untidiness: a robot that stops in one state
+    and not another. Derived from the whole tree with a floor, so a file added
+    tomorrow is also scanned — a name list could not notice a new file.
     """
     creators, scanned = [], 0
     for path in sorted(REPO_ROOT.rglob("*.py")):
@@ -701,7 +705,80 @@ def test_the_stop_reflex_has_exactly_one_creator() -> None:
                     for t in node.targets):
                 creators.append(path.relative_to(REPO_ROOT).as_posix())
     assert scanned > 10, f"only scanned {scanned} files — the walk broke"
-    assert creators == ["game/game_node.py"], creators
+    assert creators == ["safety/guard.py"], creators
+
+
+def test_the_reflex_signature_cannot_consult_any_state() -> None:
+    """The load-bearing claim: T-D1's "works in every state" is a property of this
+    signature, not of a list of states somebody maintained. One parameter, no
+    default, no clock, no client — so there is nothing for a state to enter by."""
+    sig = inspect.signature(gd.stop_requested)
+    assert list(sig.parameters) == ["text"], sig
+    assert sig.parameters["text"].default is inspect.Parameter.empty
+    # Identifiers, not a substring scan of the source: the docstring explains what
+    # the function must not consult, and a text scan would trip over the
+    # explanation. Whitelist rather than blacklist — a blacklist cannot notice the
+    # first name nobody thought to forbid.
+    fn = next(n for n in ast.walk(ast.parse(GUARD_PY.read_text(encoding="utf-8")))
+              if isinstance(n, ast.FunctionDef) and n.name == "stop_requested")
+    names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
+    names |= {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)}
+    # `str`/`bool` are the annotations — they are part of the walk and listing them
+    # is honest about what the walk sees rather than filtering until it agrees.
+    assert names == {"text", "lowered", "any", "word", "STOP_WORDS", "lower",
+                     "str", "bool"}, names
+    assert not [n for n in ast.walk(fn) if isinstance(n, (ast.Global, ast.Nonlocal))]
+
+
+STOP_POSITIVE = ("停", "停!", "不玩了", "別玩了", "别玩了", "暫停一下", "暂停",
+                 "好了结束吧", "結束", "stop", "STOP", "Stop it",
+                 "that's enough", "quit", "no more please",
+                 # garbled/repeated, the way streaming ASR actually delivers it
+                 "停停停", "我我想停", "ok stop stop")
+STOP_NEGATIVE = ("石頭剪刀布", "rock paper scissors", "再來一局", "你好",
+                 "我想玩", "let's play", "剪刀", "教我唱歌")
+
+
+@pytest.mark.parametrize("text", STOP_POSITIVE)
+def test_every_frozen_stop_utterance_is_recognised(text: str) -> None:
+    assert gd.stop_requested(text), text
+
+
+@pytest.mark.parametrize("text", STOP_NEGATIVE)
+def test_the_negative_set_does_not_stop_the_game(text: str) -> None:
+    """A frozen negative set, and it only grows. If a real utterance ever stops the
+    game wrongly, it comes in here first and then the reflex is argued about."""
+    assert not gd.stop_requested(text), text
+
+
+def test_a_negated_stop_still_stops_and_that_is_the_decision() -> None:
+    """The asymmetry against `forget_request`, asserted rather than commented.
+
+    "不要停" means don't stop, and this returns True anyway. That is the choice:
+    the failure this reflex exists for was the LLM chaining games while 停 was
+    ignored, so recall beats precision here — the cost of a false positive is one
+    interrupted game. Contrast the deletion path, which guards the same negation
+    because its false positive destroys data. A future change that adds negation
+    handling here has to delete this test, which means saying so.
+    """
+    assert gd.stop_requested("不要停") is True
+    assert gd.stop_requested("別停") is True
+    assert gd.forget_request("不要忘記我說的名字") is None, (
+        "the contrast case: the same negation IS honoured where it protects data")
+
+
+def test_the_stop_reflex_needs_no_boto3_even_lazily(monkeypatch) -> None:
+    """T-D2's runtime half at the reflex level: a static import scan proves nothing
+    about a lazy `import boto3` inside the function, so make touching boto3 raise
+    and call the reflex anyway."""
+    class Exploding:
+        def __getattr__(self, name):
+            raise AssertionError(f"the stop reflex reached boto3.{name}")
+
+    monkeypatch.setitem(sys.modules, "boto3", Exploding())
+    monkeypatch.setitem(sys.modules, "botocore", Exploding())
+    assert gd.stop_requested("停") is True
+    assert gd.stop_requested("hello") is False
 
 
 def test_the_guard_module_imports_nothing_that_needs_the_instance() -> None:

@@ -41,7 +41,7 @@ web/robot-view/  (瀏覽器)                 │      ├─ perception/ hand_no
 | 手 | `perception/hand_node.py` | MediaPipe Tasks HandLandmarker;猜拳分類器**刻意忽略拇指**(每個人擺法不同) |
 | 想 | `agent/agent_node.py` | Bedrock Converse、Claude Sonnet 5 global 推論設定檔;每輪附一張縮圖,支援開放詞彙的場景問答 |
 | 技能 | `skills/loader.py` | 三級載入:每個技能常駐「名稱 + 一句話」(實測 96 個輸入 token);由**凍結的片語表**(而不是模型)命中時,才把本文附進當前這一回合;更深的檔案由模型透過 `read_skill_file` 自己取,該工具被圍堵在 `skills/` 之內 |
-| 反射 | `game/game_node.py` | 機器人主導口令,判定窗 `[T−0.1 s, T+0.6 s]`;停止詞在**任何**狀態都生效;每局冷卻。模型**只在舉手那一刻被問一次**,節拍本身只是把已經決定好的手打出去;這件事由測試從原始碼導出呼叫圖來**結構式**證明(節拍路徑根本到不了模型) |
+| 反射 | `game/game_node.py`、`safety/guard.py` | 機器人主導口令,判定窗 `[T−0.1 s, T+0.6 s]`;停止詞在**任何**狀態都生效 —— 而這是**簽名的性質**不是測試矩陣的性質:`guard.stop_requested(text)` 只收那句話,所以它**看不到**狀態,而節點則被結構式地驗證「派給它的位置在讀狀態之前」。每局冷卻。模型**只在舉手那一刻被問一次**,節拍本身只是把已經決定好的手打出去;這件事由測試從原始碼導出呼叫圖來**結構式**證明(節拍路徑根本到不了模型) |
 | 對手模型 | `game/opponent.py` | order-2..4 條件轉移表,鍵在**使用者自己的**(手勢, 勝負)歷史——絕不鍵在機器人的出拳,那等於給反學習者一根槓桿去操縱「它被預測時所用的那個 context」。只在**anytime-valid e-value 閘**(Ville,δ = 0.05 是單一對手的**終身**誤開上界)判定這個人確實離開均勻時才利用,否則出公平的 1/3 硬幣。**已接進 `game_node`**:每局結果 fire-and-forget 發到 `/game/rps_round`,讓 `memory_node` 維持成唯一會寫盤的行程;累積表在啟動時由 **latched** topic 送回來,還原失敗的狀態一律整份拒絕而不做部分合併。`memory_node` 是下一個階段、目前還不存在,所以今天沒有任何節點發佈那個 topic:表每次開機都是空的,前 ~120 局實際上退回 1/3 硬幣(81 個 order-2 桶不可能被一場 20 局的 session 填滿——這是算術,不是調參選擇) |
 | 憲法 | `safety/constitution.md`、`safety/guard.py` | 十條編號條文,以**執行期資料**而不是說明文件的身分出貨:任何已登記的條文 id 從檔案裡消失,載入器就拒絕啟動 —— 少一條邊界不是文件問題。系統提示由兩個函式各自組好、只串接一次:指令區(基礎提示 + 憲法)在前,加柵欄的資料區塊在後;而 `instruction_region()` 會**拒絕**任何帶柵欄標記或資料前言的參數,所以召回的文字沒辦法被夾帶進模型讀作規則的那一區。上限:口說 600 字、60 回合、3600 秒,手勢只能來自 `body/gestures.py` 那一份白名單 |
 | 記憶寫者 | `memory/store.py` | `memory_node` 背後的單寫者 append-only 日誌。一條寫者執行緒同時服務 `events` 與 `audit` 兩個 stream —— 同一個保留期、同一條級聯刪除路徑,所以它們不可能互相不一致。序號在鎖內取得、以**高水位**發佈(一批可能倒序入列);序列化失敗的記錄被拒絕但**不消耗序號**;快照用 `os.replace` 換名,所以持有舊檔的讀者繼續讀到完整位元組;寫者執行緒死掉時 `flush()` 拋錯而不是無限等待 |
@@ -84,7 +84,7 @@ open web/robot-view/index.html
 | `web/robot-view/` | 單頁「臉」:MJPEG 身體視圖 + 事件 HUD |
 | `skills/` | Markdown 技能,以及替它們把關的加載器。見 [`skills/README.md`](skills/README.md) |
 | `safety/`、`memory/` | 憲法與單寫者儲存層 —— 純模組、零 ROS,所以它們的測試在筆電上就跑得完 |
-| `tests/` | 離線測試 459 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
+| `tests/` | 離線測試 566 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
 | `infra/` | 開機供裝、環境安裝、行程監管(`run_ec2.sh` 用 pid 檔,**絕不**用 `pkill` 樣式) |
 | `docs/` | 設計記錄:七輪研究(原始證據在 `docs/evidence/`)、day-0 延遲量測、demo 手冊、記憶與安全的設計批判,以及[測試契約](docs/test-design.md) |
 
@@ -93,7 +93,7 @@ open web/robot-view/index.html
 ```bash
 pytest -m "not mutation"   # 每次存檔跑
 pytest                     # 每個 PR 跑:加上具名突變體
-pytest -m mutation         # 只跑突變體(2026-08-23 量到 93 個案例)
+pytest -m mutation         # 只跑突變體(2026-08-23 量到 107 個案例)
 infra/check_deploy.sh      # repo 裡的每個節點,runner 真的會啟動它嗎?
 ```
 
