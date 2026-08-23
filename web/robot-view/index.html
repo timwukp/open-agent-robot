@@ -9,7 +9,11 @@
          font: 14px/1.5 -apple-system, "PingFang TC", sans-serif;
          display: flex; flex-direction: column; align-items: center; }
   header { padding: 10px 0 4px; font-size: 17px; font-weight: 600; }
-  #stage { position: relative; }
+  /* min-height so a dead camera stream cannot collapse the stage: the <img> shrinks
+     to its alt text, and #hud (absolutely positioned against #stage) then lands on
+     top of the Art 50 rows above it. Found by looking at the rendered pixels — every
+     computed colour was correct while the marking was half covered. */
+  #stage { position: relative; min-height: 148px; }
   #robot { max-width: 96vw; border-radius: 10px; background: #000;
            box-shadow: 0 4px 24px rgba(0,0,0,.5); }
   #hud { position: absolute; left: 12px; bottom: 12px; padding: 6px 12px;
@@ -17,11 +21,29 @@
   #events { width: min(920px, 96vw); margin: 10px 0 24px; padding: 8px 12px;
             background: #171d24; border-radius: 8px; min-height: 3.2em;
             white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; }
+  /* EU AI Act Art 50(1): always on screen, never event-driven — an element that
+     appears only when a message arrives is absent exactly when the gateway is
+     down. Explicit colour *and* background, both different from the page
+     background, so the badge cannot be "present but invisible" (a class token in
+     the stylesheet is not evidence that a colour rendered — test item T-E3). */
+  /* Both Art 50 rows sit above any overlay: a legally required notice must not be
+     coverable by a positioned element, whatever the layout does. Static elements
+     ignore z-index, hence position: relative. */
+  #disclosure, #voice { position: relative; z-index: 2; }
+  #disclosure { width: min(920px, 96vw); margin: 6px 0 0; padding: 7px 12px;
+                background: #2b2113; color: #ffd479; border: 1px solid #6b5320;
+                border-radius: 8px; font-size: 13px; font-weight: 600; }
+  /* Art 50(2): which synthetic engine is speaking, updated from /speech/tts_started. */
+  #voice { width: min(920px, 96vw); margin: 6px 0 0; padding: 5px 12px;
+           background: #171d24; color: #9fb3c8; border-radius: 8px; font-size: 12px;
+           font-family: ui-monospace, monospace; }
   .ok { color: #7bd88f; } .bad { color: #ff7b72; }
 </style>
 </head>
 <body>
 <header>open-agent-robot <span id="conn" class="bad">●</span></header>
+<div id="disclosure">AI 系統 · 合成語音 / AI system · synthetic voice</div>
+<div id="voice">合成語音引擎:待命 / synthetic TTS: idle</div>
 <div id="stage">
   <img id="robot" src="http://localhost:8080/stream" width="1280" height="720"
        alt="robot view (MJPEG via SSH tunnel)">
@@ -34,6 +56,7 @@ const hud = document.getElementById('hud');
 const log = document.getElementById('events');
 const conn = document.getElementById('conn');
 const img = document.getElementById('robot');
+const voice = document.getElementById('voice');
 img.addEventListener('load', () => { conn.className = 'ok'; });
 img.addEventListener('error', () => {
   conn.className = 'bad';
@@ -44,6 +67,13 @@ function connectEvents() {
   ws.onmessage = (e) => {
     try {
       const ev = JSON.parse(e.data);
+      if (ev.type === 'tts_started') {   // Art 50(2) marking, straight from the engine
+        voice.textContent = ev.synthetic
+          ? `合成語音 / synthetic voice — ${ev.engine} (${ev.voice})`
+          : `未標記為合成 / NOT marked synthetic — ${ev.engine ?? '?'}`;
+        voice.className = ev.synthetic ? '' : 'bad';
+        return;                          // no text/hud of its own; stays out of the log
+      }
       hud.textContent = ev.hud ?? hud.textContent;
       if (ev.text)   // hud-only updates (e.g. live hand feedback) skip the log
         log.textContent = (`[${new Date().toLocaleTimeString()}] ${ev.text}\n`

@@ -84,7 +84,8 @@ CONSTITUTION_PATH = Path(__file__).resolve().parent / "constitution.md"
 # the model nicely is a different strength of guarantee from one a closed set
 # enforces, and conflating the two is how a prompt gets mistaken for a boundary.
 REQUIRED_CLAUSES = {
-    "C1": "Art 50(1) disclosure. Deterministic path lands in S2.5; text only today.",
+    "C1": "Art 50(1) disclosure. Enforced by safety/disclosure.py + the gateway; "
+          "this clause only stops the model *denying* it.",
     "C2": "Stop is a reflex, not a negotiation. Enforced by game_node's STOP_WORDS.",
     "C3": "'Are you sure?' hardening. Text only — measured by T-D5, never a CI gate.",
     "C4": "No emotion inference from acoustics or faces (EU AI Act Annex III 1(c)).",
