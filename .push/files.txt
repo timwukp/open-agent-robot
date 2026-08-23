@@ -1,12 +1,6 @@
-100644 memory/profile.py
-100644 memory/profile.example.json
-100644 memory/memory_node.py
-100644 memory/store.py
-100755 infra/run_ec2.sh
-100644 tests/test_profile.py
-100644 tests/test_store.py
+100755 .push/push_branch.py
+100644 tests/test_push_branch.py
 100644 docs/test-design.md
 100644 README.md
 100644 README.zh-TW.md
 100644 .push/files.txt
-100755 .push/push_branch.py
