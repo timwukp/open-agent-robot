@@ -1,0 +1,25 @@
+{
+  "model": "global.anthropic.claude-sonnet-5",
+  "region": "ap-southeast-1",
+  "baseline_input_tokens": 14,
+  "method": "inputTokens(system=sample) - inputTokens(no system block)",
+  "proxy": "skills.loader.approx_tokens — the ONE proxy in this repo, so that a second budget is not a second calibration",
+  "samples": [
+    {
+      "name": "constitution_as_shipped",
+      "chars": 1096,
+      "tokens": 1076,
+      "tokens_per_char": 0.9818,
+      "proxy_tokens": 828,
+      "proxy_over_real": 0.7695
+    },
+    {
+      "name": "constitution_prose_only",
+      "chars": 839,
+      "tokens": 867,
+      "tokens_per_char": 1.0334,
+      "proxy_tokens": 698,
+      "proxy_over_real": 0.8051
+    }
+  ]
+}
