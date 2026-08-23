@@ -1,0 +1,12 @@
+{
+  "contexts": 258,
+  "gate_open": true,
+  "max": 0.11370802531018853,
+  "p50": 0.008209026418626308,
+  "p95": 0.011334021110087633,
+  "samples": 2000,
+  "seed": 0,
+  "tick_period_ms": 20.0,
+  "unit": "ms",
+  "warmup_rounds": 300
+}
