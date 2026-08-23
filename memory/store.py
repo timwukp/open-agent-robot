@@ -32,6 +32,20 @@ version where the boundary never existed. Plan §S4.5 put this stage here; what 
 measurable is that the cost of putting it here is zero and the cost of putting it
 one stage later is unbounded.
 
+**Why an append-only log has a way to get shorter.**
+`rewrite_stream` looks like the opposite of everything above, and the resolution is
+that "append-only" is a property of the *turn loop*, not a property of the file for
+all time. Nothing in a conversation may edit history; a deletion transaction must,
+because 「忘記我說的 X」 has to remove the sentence from the file that holds it and a
+tombstone that leaves the text on disk is retrieval suppression wearing deletion's
+name — the thing plan §1 refused when it refused Ebbinghaus decay as a right to
+erasure. So the shortening exists, it is one method, it goes through the same single
+writer, it can only drop whole records addressed by sequence number (never alter
+one), and `REWRITABLE` says which streams it may touch. The seq gaps it leaves are
+what `memory/erase.py`'s tombstones exist to account for: after this method exists,
+"a gap means a deletion" is only true if every gap has a tombstone naming it, which
+is a two-directional check rather than a comment.
+
 **What durability means here, precisely.**
 `flush()` guarantees the record has been handed to the kernel *and* fsynced, so
 another process can read it and a power loss will not lose it. The test suite can
@@ -132,6 +146,22 @@ GOALS = (
 # goal, and every census and retention sweep counts it as real.
 WHY_REQUIRED = {"events": True, "audit": False}
 
+# Which streams a deletion may shorten (design item T-C4, plan §3 S5).
+#
+# Written out for every member of `STREAMS` for the same reason `WHY_REQUIRED` is,
+# and the `audit` entry is the substantive half. A right-to-erasure transaction has
+# to remove what a person said from the file that holds it — a tombstone that leaves
+# the text on disk is retrieval suppression, which plan §1 already refused under its
+# other name ("Ebbinghaus decay is not deletion"). So `events` is rewritable.
+#
+# `audit` is not, and this is the one place that decision can be enforced: an audit
+# log the deletion path can rewrite is not an audit log, because the record that a
+# deletion happened would be removable by the next deletion. The consequence is
+# stated rather than hidden — see `memory/erase.py`'s `RETAINED`: the audit stream is
+# outside the erasure, so audit records must not quote user text, and today nothing
+# enforces that. That gap is reported by every receipt instead of being implied away.
+REWRITABLE = {"events": True, "audit": False}
+
 # Record fields that are meaningless without a companion field (plan §S3.5).
 #
 # `salience` is a number produced by a formula, and the same number from a different
@@ -187,6 +217,63 @@ def unlock_for_s5(name: str) -> None:
 
 def is_locked(name: str) -> bool:
     return name in PROTECTED_SNAPSHOTS and name not in _UNLOCKED
+
+
+def recovered_seq(root: Path) -> int:
+    """The highest sequence number already on disk under `root`, across all streams.
+
+    A `Store` resumes from this instead of starting at zero, and the reason is the
+    deletion transaction. `rewrite_stream` addresses records by sequence number, and
+    `memory.consolidate.episode_id` derives an episode's identity from the sequence of
+    its first record. A counter that restarts issues numbers the files already hold,
+    so after one reboot "delete seq 5" names two records written weeks apart, in two
+    different episodes — a right-to-erasure request that removes somebody's unrelated
+    sentence, silently, with a receipt that reads clean. Two episodes would also mint
+    the same id, which the warm layer's duplicate check would report as corruption
+    long after the cause.
+
+    One counter across **both** streams, matching the one that issues them: the max is
+    taken over every member of `STREAMS`, so an `audit`-only session still moves the
+    number that `events` will use next.
+
+    Snapshot and rewrite operations consume a sequence number and write no record, so
+    the recovered value can be lower than the highest ever issued. That is harmless
+    and deliberate — nothing addresses a snapshot by seq, and the property that
+    matters is only that no number on disk is issued twice.
+
+    Raises on an unparseable line, exactly like `read`, which means a torn line stops
+    the node from booting rather than being repaired by guessing. The consequence is
+    stated because it is a real cost: a power cut during a write can leave a torn
+    final line, and this treats that the same as a second writer. Distinguishing them
+    (tolerating a torn *tail*, refusing a torn *middle*) is a policy decision with its
+    own audit obligation, and inventing it quietly here would be the wrong place.
+    """
+    root = Path(root)
+    high = 0
+    for stream in STREAMS:
+        path = root / f"{stream}.jsonl"
+        if not path.exists():
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise StoreError(
+                    f"{path.name} line {n} is not valid JSON ({exc}) — refusing to "
+                    f"resume the sequence counter from a file with a partial line, "
+                    f"{len(line)} bytes. Resuming at 0 would re-issue numbers this "
+                    "file already holds, and a deletion addressed by sequence number "
+                    "would then remove another episode's record") from exc
+            seq = record.get("seq") if isinstance(record, dict) else None
+            if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+                raise StoreError(
+                    f"{path.name} line {n} has seq {seq!r}: a record with no sequence "
+                    "number cannot bound the counter, and resuming below it would "
+                    "issue a number that is already in use")
+            high = max(high, seq)
+    return high
 
 # Where the data lives in production. Overridable by env var for the instance,
 # because the home directory differs between the laptop and the AMI's user — but
@@ -367,9 +454,24 @@ class Store:
 
         self._q: queue.Queue = queue.Queue()
         self._handles: dict[str, IO[str]] = {}
-        self._seq = 0
-        self._durable = 0
+        # Resumed from the disk, not started at zero. See `recovered_seq`.
+        #
+        # `_durable` starts at the same value, and it has to: every recovered number is
+        # by definition already on the disk, while `_durable` means "published by the
+        # writer thread of *this* process". Leaving it at 0 makes `flush()` — whose
+        # default target is `self._seq` — wait for numbers no writer will ever publish,
+        # so opening a store over a non-empty root and closing it without writing
+        # anything hangs for five seconds and then leaves the thread waiting. That is
+        # the shape of defect this pair invites: two variables holding one fact, only
+        # one of them updated.
+        self._seq = recovered_seq(self.root)
+        self._durable = self._seq
         self._failure: BaseException | None = None
+        # Outcome of each rewrite, keyed by its sequence number. The dropped set is
+        # only knowable in the writer thread (it is what the file actually held), and
+        # the tombstone has to be built from what was removed rather than from what
+        # the caller intended — two numbers, two claims.
+        self._rewrites: dict[int, tuple[int, ...]] = {}
         self._lock = threading.Lock()
         self._progress = threading.Condition(self._lock)
         self._writer = threading.Thread(target=self._run, name="oar-store-writer",
@@ -469,6 +571,73 @@ class Store:
         self._q.put(("snapshot", name, body, seq))
         return seq
 
+    def rewrite_stream(self, stream: str, drop) -> tuple[int, ...]:
+        """Remove the records of `stream` whose seq is in `drop`. Returns what went.
+
+        The only way to make an append-only file shorter, and the deletion
+        transaction's one write into a stream. Four deliberate shapes:
+
+        **It takes seqs, not lines.** A `rewrite(stream, lines)` API is an
+        edit-history API: it can alter a record's text as easily as remove it, and an
+        append-only log exists to make exactly that impossible. Addressing records by
+        sequence number means the survivors are copied through byte for byte, so this
+        primitive can drop whole records and can do nothing else.
+
+        **It names what goes, not what stays.** A keep-set is the more natural way to
+        write the filter and it is wrong here: any record appended between the moment
+        the caller computed its plan and the moment this runs is absent from the
+        keep-set, so it would be deleted — silently, and by a transaction that never
+        examined it. Under-deleting is visible (the receipt says a reference is still
+        there) and fixed by running the transaction again; over-deleting personal data
+        is the one direction nothing can repair. So the caller names its targets and a
+        record it has not heard of survives.
+
+        **It returns the seqs actually dropped rather than accepting them.** What the
+        file held is only knowable here, and a tombstone built from the caller's plan
+        would claim a deletion the disk may not have performed. The difference between
+        the request and the return is itself information: on a second run of the same
+        deletion it is the whole request, which is what makes the transaction
+        idempotent rather than merely repeatable.
+
+        **It blocks.** Every other producer call is fire-and-forget because the speech
+        loop cannot wait on a disk. A deletion is a transaction whose next step must
+        not start until this one is durable, and it runs on the retention sweep or on
+        「忘記我說的 X」 — never inside a turn.
+        """
+        if stream not in STREAMS:
+            raise StoreError(f"unknown stream {stream!r}; the streams are {STREAMS}")
+        if stream not in REWRITABLE:
+            raise StoreError(
+                f"stream {stream!r} is in STREAMS but not in REWRITABLE: a new stream "
+                "has to decide whether a deletion may shorten it, and a default "
+                "either way is the decision nobody made")
+        if not REWRITABLE[stream]:
+            raise StoreError(
+                f"{stream!r} may not be rewritten: an audit log the deletion path can "
+                "shorten is not an audit log, because the record that a deletion "
+                "happened would be removable by the next one. See memory.erase.RETAINED "
+                "for what that costs and what is not covered by an erasure")
+        drop_set = frozenset(drop)
+        bad = sorted(repr(s) for s in drop_set
+                     if isinstance(s, bool) or not isinstance(s, int))
+        if bad:
+            raise StoreError(
+                f"drop must contain store sequence numbers, got {bad} — a list "
+                "position here would remove the wrong records and the file would "
+                "still parse")
+        self._raise_if_failed()
+        with self._lock:
+            self._seq += 1
+            seq = self._seq
+        self._q.put(("rewrite", stream, drop_set, seq))
+        self.flush(seq)
+        with self._lock:
+            if seq not in self._rewrites:
+                raise StoreError(
+                    f"rewrite {seq} of {stream!r} reported durable with no outcome "
+                    "recorded — refusing to build a tombstone from an absent result")
+            return self._rewrites.pop(seq)
+
     def flush(self, seq: int | None = None) -> None:
         """Block until `seq` (default: everything enqueued so far) is durable."""
         with self._lock:
@@ -549,6 +718,26 @@ class Store:
                     touched.add(target)
                 elif op == "snapshot":
                     self._replace(target, body)
+                elif op == "rewrite":
+                    # Drain first, for the *other* stream. `_rewrite` closes the
+                    # handle it is about, and closing flushes, so this is not what
+                    # makes an in-flight append to `events` visible to the copy. What
+                    # it does is make everything else in the batch durable before a
+                    # file gets replaced — above all the tombstone, which is an
+                    # `audit` append that must reach the disk before the removal it
+                    # describes. `memory.erase.delete` also flushes it explicitly;
+                    # this is the same ordering made structural, so a future caller
+                    # that forgets does not silently invert it.
+                    #
+                    # `touched.clear()` is load-bearing, not tidiness: `_sync` looks
+                    # each stream up in `self._handles`, and `_rewrite` pops the one
+                    # it closed, so a stale entry here raises KeyError at the end of
+                    # the batch and kills the writer.
+                    self._sync(touched)
+                    touched.clear()
+                    dropped = self._rewrite(target, body)
+                    with self._lock:
+                        self._rewrites[seq] = dropped
                 # The **high-water mark of the batch**, not the last item drained.
                 # `append` takes its sequence number under the lock and then enqueues
                 # outside it, so two producers can enqueue 6 before 5; publishing the
@@ -584,6 +773,76 @@ class Store:
             fh = os.fdopen(fd, "a", encoding="utf-8")
             self._handles[stream] = fh
         return fh
+
+    def _rewrite(self, stream: str, drop: frozenset) -> tuple[int, ...]:
+        """Copy `stream` through, omitting `drop`. Writer thread only.
+
+        **Why the handle is closed at the end and not reused.** `_handle` keeps the
+        append fd open across records, and `os.replace` swaps the *name* onto a new
+        inode — the old fd keeps pointing at the unlinked file. Reusing it would send
+        every subsequent append into a file with no name, so the records would be
+        accepted, fsynced, reported durable, and invisible to every reader, with the
+        disk usage as the only symptom. Dropping the handle makes the next append
+        reopen by name. `tests/test_store.py` asserts on the inode rather than on the
+        record count, because a count can pass while pointing at the wrong file.
+
+        **Why it does not flush or fsync first, even though it must not read a stale
+        file.** A buffered append that is not in the file yet would be copied away —
+        a record destroyed by a deletion that never named it, which is the one
+        direction nothing can repair. Two mechanisms already prevent it and neither is
+        this one: `close()` above flushes the Python buffer, and `_run` drains the
+        batch with `_sync(touched)` before calling here. Adding a third would put a
+        second `fh.flush()` / `os.fsync(fh.fileno())` pair in this module, and the
+        mutation harness anchors on that exact pair and requires it to be unique — so
+        the duplicate would make "remove the fsync" ambiguous about which site it
+        removed, weakening a live test to buy a redundancy. That the property holds is
+        shown by removing *both* mechanisms at once
+        (tests/test_store.py::test_without_the_flush_and_the_drain_a_rewrite_deletes_a_bystander),
+        which is honest about what that mutant demonstrates: the property is protected
+        twice over, and the mutant does not attribute it to one line.
+
+        **A torn line here kills the writer, and that is the intended response.** The
+        refusal below runs in the writer thread, so `_failure` is set and no further
+        record — including audit — is written by this store. The caller does learn:
+        `rewrite_stream` blocks on `flush(seq)`, which re-raises. It is the right
+        trade because a partial line means a second process wrote to this file, so the
+        single-writer invariant the module exists to provide is already gone, and the
+        alternative is to keep appending to a file known to be corrupt. The
+        availability cost is real and is not hidden: one torn line stops the memory
+        node's logging until a person looks at the file.
+        """
+        path = self.path_for(stream)
+        fh = self._handles.pop(stream, None)
+        if fh is not None:
+            fh.close()
+        if not path.exists():
+            return ()
+        kept_lines: list[str] = []
+        dropped: list[int] = []
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                # The same refusal `read()` makes, and it matters more here: skipping
+                # an unparseable line would *delete* it, so a deletion would quietly
+                # repair the corruption it should have reported.
+                raise StoreError(
+                    f"{path.name} line {n} is not valid JSON ({exc}) — refusing to "
+                    f"rewrite a file with a partial line, {len(line)} bytes") from exc
+            seq = record.get("seq")
+            if isinstance(seq, bool) or not isinstance(seq, int):
+                raise StoreError(
+                    f"{path.name} line {n} has seq {seq!r}: a record with no sequence "
+                    "number cannot be kept or dropped by identity, and rewriting the "
+                    "file would decide its fate by position")
+            if seq in drop:
+                dropped.append(seq)
+            else:
+                kept_lines.append(line)
+        self._replace(path.name, "".join(f"{line}\n" for line in kept_lines))
+        return tuple(dropped)
 
     def _replace(self, name: str, body: str) -> None:
         """Write `body` to a temp file in the same directory, then rename over.

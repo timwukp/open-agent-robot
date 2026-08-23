@@ -479,6 +479,16 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 # ------------------------------------------------------------------- artifacts
 def load_episodes(path: Path) -> tuple[dict, ...]:
+    """`parse_episodes` of the file at `path`. The disk half, so the parser is pure."""
+    path = Path(path)
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RecallError(f"{path}: not valid JSON ({exc})") from exc
+    return parse_episodes(obj, where=str(path))
+
+
+def parse_episodes(obj: Any, where: str = "<dict>") -> tuple[dict, ...]:
     """The warm layer: one validated entry per closed episode.
 
     Validation is as strict as `profile.parse` and for the same reasons: an unknown
@@ -487,12 +497,15 @@ def load_episodes(path: Path) -> tuple[dict, ...]:
     summarised before the encoder existed is a real state — but a *present* one must
     be a non-empty list of numbers, because a `null` embedding scored as a zero
     vector is another blind-but-`ran` path.
+
+    Split from `load_episodes` the way `profile.parse` is split from `profile.load`,
+    and for a reason that arrived with the deletion transaction: `memory/erase.py`
+    builds a *new* warm layer and has to validate it with the parser the retrieval
+    path uses, before writing. Two validators would let an erasure emit a file its
+    own reader refuses, and the failure would surface on the next boot as a corrupt
+    store rather than at the write that caused it.
     """
-    path = Path(path)
-    try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise RecallError(f"{path}: not valid JSON ({exc})") from exc
+    path = where
     if not isinstance(obj, dict) or obj.get("version") != 1:
         raise RecallError(f"{path}: expected a v1 object, got {type(obj).__name__} "
                           f"with version {obj.get('version') if isinstance(obj, dict) else None!r}")
@@ -540,6 +553,95 @@ def load_episodes(path: Path) -> tuple[dict, ...]:
         raise RecallError(f"{path}: duplicate episode id(s) {dupes} — two entries "
                           "under one id means a deletion removes one and leaves one")
     return tuple(out)
+
+
+def load_events(root: Path) -> list[dict]:
+    """Every event record under `root`, validated the way `Store.read` validates it.
+
+    Deliberately not `Store.read`: constructing a `Store` starts a writer thread, and
+    a *reader* that spawns the single writer in order to read is a second writer
+    waiting to happen. The parse strictness is the same — a line that does not parse
+    raises, because a truncated line is the failure the store exists to prevent and
+    skipping it would make that failure unobservable.
+
+    Module-level rather than a `Retriever` method because the deletion transaction
+    reads the stream too, and it must not have to build a retriever (with an encoder
+    and a deadline) to find out which records exist.
+    """
+    path = Path(root) / EVENTS_ARTIFACT
+    out = []
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RecallError(
+                f"{EVENTS_ARTIFACT} line {n} is not valid JSON ({exc}) — a "
+                f"partial line means two writers, {len(line)} bytes") from exc
+        if "seq" not in record:
+            raise RecallError(
+                f"{EVENTS_ARTIFACT} line {n} has no 'seq': the store stamps every "
+                "record, so this did not come from it, and it cannot be attributed "
+                "to an episode or removed by one")
+        out.append(record)
+    return out
+
+
+def parse_rounds(obj: Any, where: str = "<dict>") -> tuple[dict, ...]:
+    """The opponent table's rounds. Validated, and the **top level is closed**.
+
+    Closed because of what an open one would cost the deletion: `rounds` is the only
+    key an erasure knows how to filter, so a sibling key holding per-episode counts
+    would survive every deletion while nothing anywhere said so. Track B has not
+    landed yet, which makes this free to require today and a migration over one
+    person's behavioural data to require later (plan §0-8's timing argument, applied
+    to a second field).
+
+    The *round entry's* fields stay open, and that asymmetry is deliberate rather
+    than an oversight: a round is removed whole, by its position, so an unknown field
+    on a removed round goes with it. Only a key beside `rounds` can hide from that.
+    """
+    if not isinstance(obj, dict):
+        raise RecallError(f"{where}: expected an object, got {type(obj).__name__}")
+    # Shape first, then version, then the closed check — deliberately *not* the order
+    # the checks were written in. A pre-Track-B table of bare counts
+    # (`{"rock": 4, ...}`) trips all three, and the message it gets decides whether
+    # the next person migrates the file or deletes it: "unknown top-level keys
+    # ['paper', 'rock']" describes the symptom, "expected a 'rounds' list" names what
+    # the file is. The most specific diagnosis of the realistic bad file goes first.
+    rounds = obj.get("rounds")
+    if not isinstance(rounds, list):
+        raise RecallError(
+            f"{where}: expected a 'rounds' list. A table of bare counts cannot say "
+            "which episode a count came from, so no deletion could ever prove it "
+            "removed one")
+    if obj.get("version") != 1:
+        raise RecallError(f"{where}: version must be 1, got {obj.get('version')!r}")
+    unknown = sorted(set(obj) - {"version", "rounds"})
+    if unknown:
+        raise RecallError(
+            f"{where}: unknown top-level key(s) {unknown} — 'rounds' is the only key "
+            "a deletion knows how to filter, so anything beside it would outlive "
+            "every erasure")
+    for i, entry in enumerate(rounds):
+        if not isinstance(entry, dict):
+            raise RecallError(f"{where}: round {i} is not an object")
+        eid = entry.get("episode")
+        if eid is not None and not is_episode_id(eid):
+            raise RecallError(f"{where}: round {i} has episode {eid!r}, "
+                              "which is not a minted episode id")
+    return tuple(rounds)
+
+
+def load_rounds(path: Path) -> tuple[dict, ...]:
+    """`parse_rounds` of the file at `path`."""
+    path = Path(path)
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RecallError(f"{path.name}: not valid JSON ({exc})") from exc
+    return parse_rounds(obj, where=path.name)
 
 
 def attribution(episodes: Iterable[Mapping]) -> dict[int, str]:
@@ -740,65 +842,20 @@ class Retriever:
         carries: if the file has no per-episode attribution, every hit is
         unattributed and `deletion_findings` says so instead of reporting a clean zero.
         """
-        path = self.root / RPS_ARTIFACT
-        try:
-            obj = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise RecallError(f"{RPS_ARTIFACT}: not valid JSON ({exc})") from exc
-        if not isinstance(obj, dict):
-            raise RecallError(f"{RPS_ARTIFACT}: expected an object, "
-                              f"got {type(obj).__name__}")
-        rounds = obj.get("rounds")
-        if not isinstance(rounds, list):
-            raise RecallError(
-                f"{RPS_ARTIFACT}: expected a 'rounds' list. A table of bare counts "
-                "cannot say which episode a count came from, so no deletion could "
-                "ever prove it removed one")
         hits = []
-        for i, entry in enumerate(rounds):
-            if not isinstance(entry, dict):
-                raise RecallError(f"{RPS_ARTIFACT}: round {i} is not an object")
-            eid = entry.get("episode")
-            if eid is None:
-                # Not an error: a table written before the attribution field existed
-                # is a real state. It is an ORPHAN, so the deletion check reports it
-                # instead of counting it as a clean zero.
-                eid = ORPHAN
-            elif not is_episode_id(eid):
-                raise RecallError(f"{RPS_ARTIFACT}: round {i} has episode {eid!r}, "
-                                  "which is not a minted episode id")
+        for i, entry in enumerate(load_rounds(self.root / RPS_ARTIFACT)):
+            # `None` is not an error: a table written before the attribution field
+            # existed is a real state. It is an ORPHAN, so the deletion check reports
+            # it instead of counting it as a clean zero.
+            eid = entry.get("episode") or ORPHAN
             label = f"{entry.get('user', '?')}/{entry.get('outcome', '?')}"
             hits.append(Hit("rps", eid, label, 1.0, f"{RPS_ARTIFACT}#{i}"))
         return hits
 
     # ------------------------------------------------------------- internals
     def _events(self) -> list[dict]:
-        """Every event record, validated the way `Store.read` validates it.
-
-        Deliberately not `Store.read`: constructing a `Store` starts a writer
-        thread, and a retrieval module that spawns the single writer in order to read
-        is a second writer waiting to happen. The parse strictness is the same — a
-        line that does not parse raises, because a truncated line is the failure the
-        store exists to prevent and skipping it would make that failure unobservable.
-        """
-        path = self.root / EVENTS_ARTIFACT
-        out = []
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise RecallError(
-                    f"{EVENTS_ARTIFACT} line {n} is not valid JSON ({exc}) — a "
-                    f"partial line means two writers, {len(line)} bytes") from exc
-            if "seq" not in record:
-                raise RecallError(
-                    f"{EVENTS_ARTIFACT} line {n} has no 'seq': the store stamps every "
-                    "record, so this did not come from it, and it cannot be attributed "
-                    "to an episode or removed by one")
-            out.append(record)
-        return out
+        """Every event record. One creator: `load_events`, which erasure shares."""
+        return load_events(self.root)
 
     def unembedded(self) -> tuple[str, ...]:
         """Episode ids in the warm layer with no vector. Reported, never assumed away.

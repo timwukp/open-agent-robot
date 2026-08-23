@@ -225,25 +225,32 @@ def test_a_tolerant_reader_would_hide_the_corruption(tmp_path):
 
     A reader that skips unparseable lines makes the failure this module exists to
     prevent unobservable — the file gets shorter and nothing anywhere goes red.
+
+    The store is built on a clean root and the file corrupted **afterwards**, because
+    `recovered_seq` now refuses a partial line at construction time. Writing the
+    corrupt file first would make this pass on the constructor's refusal while never
+    calling `read()` at all — the assertion would be green with the mutant applied,
+    since both messages contain "not valid JSON". Same reason the mutant cannot be
+    constructed over the corrupt root either: it patches `read`, not recovery.
     """
-    (tmp_path / "data").mkdir(parents=True)
-    (tmp_path / "data" / "events.jsonl").write_text(
-        '{"seq": 1, "ts": 0.0, "kind": "fine"}\n{"seq": 2, "ts": 0.0, "kind": "trunc\n',
-        encoding="utf-8")
+    corrupt = ('{"seq": 1, "ts": 0.0, "kind": "fine"}\n'
+               '{"seq": 2, "ts": 0.0, "kind": "trunc\n')
+    store = make_store(tmp_path)
+    (tmp_path / "data" / "events.jsonl").write_text(corrupt, encoding="utf-8")
+    with pytest.raises(st.StoreError, match="two writers"):
+        store.read("events")
 
-    with pytest.raises(st.StoreError, match="not valid JSON"):
-        make_store(tmp_path).read("events")
-
-    mutant = load_mutant(tmp_path, (
+    mutant_module = load_mutant(tmp_path, (
         JSON_PARSE,
         "                try:\n"
         "                    out.append(json.loads(line))\n"
         "                except Exception:\n"
         "                    pass",
     ))
+    mutant = mutant_module.Store(tmp_path / "clean", _allow_ephemeral=True)
+    (tmp_path / "clean" / "events.jsonl").write_text(corrupt, encoding="utf-8")
     # The mutant returns the one good record and silently drops the truncated one.
-    assert len(mutant.Store(tmp_path / "data", _allow_ephemeral=True)
-               .read("events")) == 1
+    assert len(mutant.read("events")) == 1
 
 
 # --------------------------------------------- T-A2 atomic replace, no debris (D)
@@ -719,3 +726,471 @@ def _capture(store) -> BaseException | None:
     except BaseException as exc:  # noqa: BLE001 — the value under test
         return exc
     return None
+
+
+# ------------------------------------- T-C4 the primitive: rewrite_stream (D)
+#
+# The one way an append-only file gets shorter. Everything here is about the writer
+# rather than about the deletion transaction — tests/test_erase.py owns that — and
+# the two assertions worth reading twice are the inode one and the in-flight one:
+# both name a defect whose only symptom is silence.
+def _seqs_on_disk(root: Path, stream: str = "events") -> list[int]:
+    text = (root / f"{stream}.jsonl").read_text(encoding="utf-8")
+    return [json.loads(line)["seq"] for line in text.splitlines() if line.strip()]
+
+
+def test_a_rewrite_drops_exactly_the_named_seqs_and_copies_the_rest_byte_for_byte(
+        tmp_path):
+    """Records go whole or not at all: the survivors are the same bytes.
+
+    Compared line by line against the pre-rewrite text rather than by re-reading the
+    parsed records, because a re-serialise-and-compare would agree with itself: the
+    writer would produce the same JSON from the same dict even if the rewrite had
+    rebuilt every line. `rewrite_stream` is meant to be incapable of altering a
+    record's text, and only the raw bytes can show that.
+    """
+    store = make_store(tmp_path)
+    try:
+        for i in range(6):
+            store.append("events", {"text": f"line {i}", "why": WHY})
+        store.flush()
+        path = store.path_for("events")
+        before = path.read_text(encoding="utf-8").splitlines()
+        assert len(before) == 6
+        dropped = store.rewrite_stream("events", [2, 4])
+        assert dropped == (2, 4)
+        after = path.read_text(encoding="utf-8").splitlines()
+        kept = [line for line in before if json.loads(line)["seq"] not in (2, 4)]
+        assert after == kept, "surviving records were re-rendered, not copied"
+        assert _seqs_on_disk(store.root) == [1, 3, 5, 6]
+    finally:
+        store.close()
+
+
+def test_a_rewrite_reports_what_the_file_held_not_what_it_was_asked_for(tmp_path):
+    """Idempotence, and the reason the return value exists.
+
+    A second deletion of the same episode is the state a crash between the tombstone
+    and the rewrite leaves, so it has to be a normal call rather than an error. What
+    makes it *idempotent* rather than merely repeatable is that the second call
+    returns `()`: the caller can tell "already gone" from "just removed" and report
+    the difference, which is what memory/erase.py turns into a finding.
+    """
+    store = make_store(tmp_path)
+    try:
+        for i in range(3):
+            store.append("events", {"text": f"line {i}", "why": WHY})
+        store.flush()
+        assert store.rewrite_stream("events", [2]) == (2,)
+        assert store.rewrite_stream("events", [2]) == ()
+        assert store.rewrite_stream("events", [99]) == ()
+        assert _seqs_on_disk(store.root) == [1, 3]
+    finally:
+        store.close()
+
+
+def test_appends_after_a_rewrite_land_in_the_file_the_readers_open(tmp_path):
+    """The inode trap, asserted on the inode.
+
+    `os.replace` puts a new inode behind the name and the kept-open append fd still
+    points at the unlinked old one. An append through that fd is accepted, fsynced,
+    reported durable by `flush()` — and invisible to every reader forever, with disk
+    usage as the only symptom. A record-count assertion would pass on the broken
+    version for the first records and fail confusingly later, so the assertion is on
+    the identity of the file: the handle the writer holds must be the file the name
+    resolves to.
+    """
+    store = make_store(tmp_path)
+    try:
+        store.append("events", {"text": "before", "why": WHY})
+        store.flush()
+        path = store.path_for("events")
+        store.rewrite_stream("events", [1])
+        assert path.read_text(encoding="utf-8") == ""
+        store.append("events", {"text": "after", "why": WHY})
+        store.flush()
+        held = store._handles["events"]
+        assert os.fstat(held.fileno()).st_ino == os.stat(path).st_ino, (
+            "the writer is appending into the inode os.replace unlinked")
+        assert _seqs_on_disk(store.root) == [3]
+    finally:
+        store.close()
+
+
+@pytest.mark.mutation
+def test_the_stale_handle_mutant_makes_later_appends_invisible(tmp_path):
+    """The mutant for the test above: keep the handle instead of closing it."""
+    module = load_mutant(tmp_path, (
+        "        fh = self._handles.pop(stream, None)\n"
+        "        if fh is not None:\n"
+        "            fh.close()",
+        "        fh = self._handles.get(stream)\n"
+        "        if fh is not None:\n"
+        "            fh.flush()"))
+    store = make_store(tmp_path, module=module)
+    try:
+        store.append("events", {"text": "before", "why": WHY})
+        store.flush()
+        store.rewrite_stream("events", [1])
+        store.append("events", {"text": "after", "why": WHY})
+        store.flush()
+        path = store.path_for("events")
+        held = store._handles["events"]
+        assert os.fstat(held.fileno()).st_ino != os.stat(path).st_ino
+        assert _seqs_on_disk(store.root) == [], (
+            "mutant did not reproduce the defect, so the real test proves nothing")
+    finally:
+        store.close()
+
+
+def test_a_rewrite_does_not_destroy_a_record_still_in_flight(tmp_path):
+    """Checked by looking for the survivor rather than for the target.
+
+    `rewrite_stream` blocks, but the records queued before it may still be in the
+    writer's buffer when it runs. If the file on disk is short at that moment the copy
+    keeps nothing, and the buffered append is then flushed into an already-replaced
+    inode — a record destroyed by a deletion that never named it.
+
+    The assertion is therefore about record 2, which was never a target. Asserting
+    only that record 1 is gone passes on every broken version of this.
+    """
+    store = make_store(tmp_path)
+    try:
+        store.append("events", {"text": "target", "why": WHY})
+        store.append("events", {"text": "bystander", "why": WHY})
+        # No flush: both records may still be buffered when the rewrite runs.
+        assert store.rewrite_stream("events", [1]) == (1,)
+        store.flush()
+        assert _seqs_on_disk(store.root) == [2], "an unnamed record was deleted"
+    finally:
+        store.close()
+
+
+@pytest.mark.mutation
+def test_without_the_flush_and_the_drain_a_rewrite_deletes_a_bystander(tmp_path):
+    """A deliberately compound mutant, and what it does and does not show.
+
+    Two independent mechanisms put a buffered append in the file before the copy
+    reads it: `_rewrite` closing the handle (close flushes) and `_run` draining the
+    batch with `_sync(touched)`. Removing either alone changes nothing observable, so
+    a single-line mutant here would survive and read as "the assertion is wrong".
+    Removing both reproduces the defect, which shows the property is protected —
+    twice — while attributing it to neither line. Stated rather than dressed up as a
+    normal one-line mutant, per §6.0 rule 2.
+    """
+    module = load_mutant(
+        tmp_path,
+        ("        fh = self._handles.pop(stream, None)\n"
+         "        if fh is not None:\n"
+         "            fh.close()",
+         "        fh = self._handles.pop(stream, None)\n"
+         "        if fh is not None:\n"
+         "            pass"),
+        ("                    self._sync(touched)\n"
+         "                    touched.clear()\n"
+         "                    dropped = self._rewrite(target, body)",
+         "                    touched.clear()\n"
+         "                    dropped = self._rewrite(target, body)"))
+    store = make_store(tmp_path, module=module)
+    try:
+        store.append("events", {"text": "target", "why": WHY})
+        store.append("events", {"text": "bystander", "why": WHY})
+        # Both halves of the defect, and the pairing is the worst case: the target is
+        # reported absent, so a receipt would read "already gone" — while the
+        # bystander, which no plan named, is the record that actually went.
+        assert store.rewrite_stream("events", [1]) == ()
+        store.flush()
+        assert _seqs_on_disk(store.root) == [], (
+            "mutant kept the bystander, so the in-flight test proves nothing")
+    finally:
+        # The mutant leaks the un-closed handle; `close()` only knows about handles
+        # still in `_handles`, and this one was popped.
+        store.close()
+
+
+def test_the_rewrite_branch_drains_the_batch_before_replacing_a_file():
+    """The tombstone-before-removal ordering, asserted statically.
+
+    Durability ordering is not observable without cutting power — the same limit as
+    T-A3's fsync half — so this is the honest form: the drain is on the path, ahead of
+    the rewrite, checked against the AST. What it protects is the ordering
+    `memory.erase.delete` depends on: the tombstone is an `audit` append, and it has
+    to be on the disk before the file it describes is replaced. A behavioural test
+    here would be a test of `flush()`, which the erasure calls anyway, and would go
+    green on a writer that had inverted the order.
+    """
+    tree = ast.parse(STORE_PY.read_text())
+    run = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "_run")
+    branch = None
+    for node in ast.walk(run):
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "op == 'rewrite'":
+            branch = node.body
+    assert branch is not None, "memory/store.py has no rewrite branch in _run()"
+    calls = [ast.unparse(n.func) for stmt in branch for n in ast.walk(stmt)
+             if isinstance(n, ast.Call)]
+    assert "self._sync" in calls and "self._rewrite" in calls, calls
+    assert calls.index("self._sync") < calls.index("self._rewrite"), (
+        "the batch is drained after the file is replaced, so a tombstone can reach "
+        "the disk later than the removal it describes")
+
+
+def test_the_audit_stream_may_not_be_rewritten(tmp_path):
+    """`REWRITABLE["audit"] is False`, enforced in the one writer.
+
+    The consequence is the point: an audit log the deletion path can shorten cannot
+    hold the record that a deletion happened, because the next deletion could remove
+    it. Checked here rather than in memory/erase.py, since any of the nodes can reach
+    the store without importing the erasure.
+    """
+    store = make_store(tmp_path)
+    try:
+        store.append("audit", {"kind": "tombstone"})
+        store.flush()
+        with pytest.raises(st.StoreError, match="not an audit log"):
+            store.rewrite_stream("audit", [1])
+        assert _seqs_on_disk(store.root, "audit") == [1]
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("stream,drop,needle", [
+    ("nope", [1], "unknown stream"),
+    ("events", [1.5], "sequence numbers"),
+    ("events", [True], "sequence numbers"),
+    ("events", ["1"], "sequence numbers"),
+])
+def test_rewrite_refuses_what_it_cannot_address_by_identity(tmp_path, stream, drop,
+                                                            needle):
+    """A bad target is refused before a sequence number is taken.
+
+    `True` is in the list on purpose: `isinstance(True, int)` is true in Python, so a
+    bool would slip through a plain int check and match `seq == 1` — a deletion
+    addressed by an accident of the type system.
+    """
+    store = make_store(tmp_path)
+    try:
+        store.append("events", {"text": "keep", "why": WHY})
+        store.flush()
+        before = store._seq
+        with pytest.raises(st.StoreError, match=needle):
+            store.rewrite_stream(stream, drop)
+        assert store._seq == before, (
+            "a refused rewrite consumed a sequence number, so it left a gap that "
+            "looks exactly like a deletion")
+        assert _seqs_on_disk(store.root) == [1]
+    finally:
+        store.close()
+
+
+def test_a_rewrite_refuses_a_partial_line_instead_of_deleting_it(tmp_path):
+    """Corruption is reported, not quietly repaired — and it stops the writer.
+
+    A rewrite that skipped an unparseable line would *delete* it, making the deletion
+    path the one place that silently fixes a torn write. The torn write is the
+    evidence of a second writer, so both halves are asserted: the caller is told, and
+    the store stops. The second half is the consequence and it is checked rather than
+    discovered later — one torn line ends this store's logging, including audit,
+    until a person looks at the file.
+    """
+    store = make_store(tmp_path)
+    store.append("events", {"text": "good", "why": WHY})
+    store.flush()
+    with store.path_for("events").open("a", encoding="utf-8") as fh:
+        fh.write('{"seq": 2, "text": "tor')
+    with pytest.raises(st.StoreError, match="not valid JSON"):
+        store.rewrite_stream("events", [1])
+    assert '"good"' in store.path_for("events").read_text(encoding="utf-8")
+    # No `close()` in a finally: the writer is gone and closing re-raises. Every
+    # later call has to say so rather than accepting a record it cannot write.
+    with pytest.raises(st.StoreError, match="writer thread died"):
+        store.append("events", {"text": "after", "why": WHY})
+    with pytest.raises(st.StoreError, match="writer thread died"):
+        store.close()
+
+
+def test_a_rewrite_of_an_absent_file_is_empty_rather_than_an_error(tmp_path):
+    """Nothing on disk means nothing was removed, and it is not a failure.
+
+    A deletion runs against whatever the store happens to hold; a store that has
+    never written an event is a real state, and raising here would make an erasure on
+    a fresh root fail instead of reporting zero.
+    """
+    store = make_store(tmp_path)
+    try:
+        assert store.rewrite_stream("events", [1, 2]) == ()
+        assert not store.path_for("events").exists()
+    finally:
+        store.close()
+
+
+# ---------------------------------------- the sequence counter survives a restart
+#
+# Not in docs/test-design.md §2.A, and it belongs with T-A1 rather than beside it:
+# the single-writer guarantee is about one process at a time, and this is what makes
+# the *sequence numbers* unique across processes. It became load-bearing when
+# `rewrite_stream` arrived, because a deletion addresses records by seq.
+def test_a_reopened_store_resumes_the_sequence_counter(tmp_path):
+    """Two sessions, no repeated sequence number.
+
+    The assertion is on the set of seqs in the file rather than on the counter, since
+    the defect's whole symptom is two records sharing a number: `_seq` could be
+    restored correctly and still be spent by a path that does not use it.
+    """
+    first = make_store(tmp_path)
+    try:
+        for i in range(3):
+            first.append("events", {"text": f"a{i}", "why": WHY})
+        first.flush()
+    finally:
+        first.close()
+    second = st.Store(tmp_path / "data", _allow_ephemeral=True)
+    try:
+        for i in range(2):
+            second.append("events", {"text": f"b{i}", "why": WHY})
+        second.flush()
+        seqs = _seqs_on_disk(second.root)
+        assert seqs == [1, 2, 3, 4, 5], seqs
+        assert len(set(seqs)) == len(seqs), "a sequence number was issued twice"
+    finally:
+        second.close()
+
+
+def test_the_counter_is_shared_across_streams_on_recovery(tmp_path):
+    """An `audit`-only session still moves the number `events` uses next.
+
+    One counter issues both streams, so recovering from `events` alone would re-issue
+    every number an audit-heavy session spent — and the tombstone is an audit record,
+    which makes this the deletion transaction's own failure mode.
+    """
+    first = make_store(tmp_path)
+    try:
+        first.append("audit", {"kind": "guard"})
+        first.append("audit", {"kind": "guard"})
+        first.flush()
+    finally:
+        first.close()
+    assert st.recovered_seq(tmp_path / "data") == 2
+    second = st.Store(tmp_path / "data", _allow_ephemeral=True)
+    try:
+        assert second.append("events", {"text": "after", "why": WHY}) == 3
+        second.flush()
+        assert _seqs_on_disk(second.root) == [3]
+    finally:
+        second.close()
+
+
+def test_a_restart_after_a_deletion_does_not_reuse_the_deleted_number(tmp_path):
+    """The interaction that makes this a correctness bug rather than untidiness.
+
+    A rewrite leaves a gap, and a counter recovered as "max on disk" would reissue the
+    numbers above the gap if the highest records were the ones deleted. A reissued 3
+    would make a later `rewrite_stream([3])` delete a record from a different session,
+    and the tombstone naming 3 would then describe two removals.
+
+    The arithmetic is worth following, because it shows the documented lossiness:
+    events take 1, 2, 3; the rewrite consumes **4** while writing no record; the audit
+    tombstone takes 5. Recovery sees 5 (from `audit.jsonl`, not from the events file it
+    just shortened) and the next session starts at 6 — 4 is never reused because
+    nothing on disk needs it to be, and 3 is never reused because the audit record
+    outlives the event it removed.
+    """
+    first = make_store(tmp_path)
+    try:
+        for i in range(3):
+            first.append("events", {"text": f"a{i}", "why": WHY})
+        first.flush()
+        assert first.rewrite_stream("events", [3]) == (3,)
+        first.append("audit", {"kind": "tombstone", "removed": [3]})
+        first.flush()
+    finally:
+        first.close()
+    assert st.recovered_seq(tmp_path / "data") == 5
+    second = st.Store(tmp_path / "data", _allow_ephemeral=True)
+    try:
+        assert second.append("events", {"text": "later", "why": WHY}) == 6
+        second.flush()
+        assert _seqs_on_disk(second.root) == [1, 2, 6]
+    finally:
+        second.close()
+
+
+@pytest.mark.mutation
+def test_the_zero_start_mutant_reissues_a_live_sequence_number(tmp_path):
+    """The mutant: `self._seq = 0`, which is what this module shipped with."""
+    module = load_mutant(tmp_path, (
+        "        self._seq = recovered_seq(self.root)",
+        "        self._seq = 0"))
+    first = make_store(tmp_path, module=module)
+    try:
+        first.append("events", {"text": "old", "why": WHY})
+        first.flush()
+    finally:
+        first.close()
+    second = module.Store(tmp_path / "data", _allow_ephemeral=True)
+    try:
+        second.append("events", {"text": "new", "why": WHY})
+        second.flush()
+        seqs = _seqs_on_disk(second.root)
+        assert seqs == [1, 1], seqs
+        # And the consequence, spelled out: one named target, two records removed.
+        assert second.rewrite_stream("events", [1]) == (1, 1)
+    finally:
+        second.close()
+
+
+def test_recovery_refuses_a_partial_line_rather_than_guessing(tmp_path):
+    """A torn line stops the boot instead of silently resuming below it.
+
+    Resuming at 0 from a file whose lines cannot all be read is the defect above with
+    a corrupt file as its cause, so this is refused for the same reason `read` refuses
+    it. The cost is stated in `recovered_seq`: a power cut can tear the final line and
+    this treats that like a second writer.
+    """
+    root = tmp_path / "data"
+    root.mkdir()
+    (root / "events.jsonl").write_text(
+        '{"seq": 1, "text": "good"}\n{"seq": 2, "text": "tor', encoding="utf-8")
+    with pytest.raises(st.StoreError, match="partial line"):
+        st.recovered_seq(root)
+    with pytest.raises(st.StoreError, match="partial line"):
+        st.Store(root, _allow_ephemeral=True)
+
+
+def test_recovery_refuses_a_record_that_cannot_bound_the_counter(tmp_path):
+    """A line with no usable seq is refused, not skipped.
+
+    Skipping it would recover a number below one already in use whenever the missing
+    seq was the highest — the same collision, reached by tolerating a record instead
+    of a byte.
+    """
+    root = tmp_path / "data"
+    root.mkdir()
+    (root / "events.jsonl").write_text('{"seq": 1}\n{"text": "no seq"}\n',
+                                       encoding="utf-8")
+    with pytest.raises(st.StoreError, match="cannot bound the counter"):
+        st.recovered_seq(root)
+
+
+def test_opening_a_populated_store_and_flushing_nothing_returns(tmp_path):
+    """The liveness half of recovery, and it is not obvious from either variable.
+
+    `flush()` defaults to waiting for `self._seq`, and recovery moves that number
+    without any writer having published it. So a store opened over a non-empty root
+    and closed without a single write waits for a number no thread will ever publish —
+    a hang on the most ordinary path there is (a node that boots, reads, and shuts
+    down). Asserting on `flush()` returning rather than on `_durable`, since the
+    variable could be right while the wait is computed from something else.
+    """
+    first = make_store(tmp_path)
+    try:
+        first.append("events", {"text": "old", "why": WHY})
+        first.flush()
+    finally:
+        first.close()
+    second = st.Store(tmp_path / "data", _allow_ephemeral=True)
+    finished = threading.Event()
+    threading.Thread(target=lambda: (second.flush(), finished.set()),
+                     daemon=True).start()
+    assert finished.wait(timeout=5.0), "flush() on a freshly opened store hung"
+    second.close()
