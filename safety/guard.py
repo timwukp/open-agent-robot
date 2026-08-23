@@ -189,12 +189,31 @@ def instruction_region(base: str, constitution: str) -> str:
 
 
 def data_region(data: dict[str, str] | None) -> str:
-    """Zero or more fenced, sanitised, order-stable data blocks."""
+    """Zero or more fenced, sanitised, order-stable data blocks.
+
+    Two names that sanitise to the same fence name are **refused**, not renamed. The
+    sanitiser drops every non-word character and truncates at 32, so `card` and
+    `c-a-r-d` used to produce two blocks called `card`, and so did any two names
+    agreeing on their first 32 word characters. A reader — the model — then cannot
+    say where either block ends, which is the single property the fence exists to
+    provide, and the failure is invisible in a prompt nobody diffs. Refusing here
+    creates the invariant at the producer; `agent/context.py:BLOCKS` is the closed
+    set of names this repo actually passes, so the refusal is a guard against the
+    next caller rather than a condition our own callers can hit.
+    """
     if not data:
         return ""
     out = [f"\n{_DATA_PREAMBLE}\n"]
+    claimed: dict[str, str] = {}
     for name in sorted(data):
         safe_name = re.sub(r"\W", "", str(name))[:32] or "data"
+        if safe_name in claimed:
+            raise GuardError(
+                f"data blocks {claimed[safe_name]!r} and {name!r} both sanitise to "
+                f"the fence name {safe_name!r} — two blocks with one name leave the "
+                "reader unable to say where either ends. Block names come from a "
+                "closed set (agent/context.BLOCKS); add yours there instead")
+        claimed[safe_name] = str(name)
         out.append(f"{_FENCE_OPEN}{safe_name}{_FENCE_CLOSE}\n"
                    f"{_fence_safe(data[name])}\n"
                    f"{_FENCE_OPEN}/{safe_name}{_FENCE_CLOSE}\n")

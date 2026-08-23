@@ -13,6 +13,15 @@ model — whether a skill's instructions belong in this turn. Only the tiny L1 i
 (name + one sentence per skill) is resident in the system prompt; the body is
 attached to the user turn as data, and the model pulls deeper files through the
 read_skill_file tool. See skills/loader.py for why the gate is not an LLM judge.
+
+The system prompt is **not** written here. `agent/context.py` owns it — the base
+prompt, the constitution, and every fenced data block — and this node holds exactly
+one line of the result. Until that move the prompt was `SYSTEM + l1_index(...)`,
+which meant safety/guard.py's constitution and its instruction/data seam were
+correct offline and absent from the running robot (T-C5). Keeping the assembly in
+one module is what lets a test diff the instruction region byte-for-byte against a
+baseline; a node that concatenated its own strings would have to be launched to be
+checked, and this suite never launches rclpy.
 """
 from __future__ import annotations
 import json
@@ -29,6 +38,8 @@ from std_msgs.msg import String
 # root — without this, `from skills import loader` fails only on the robot.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from agent import context  # noqa: E402
+from safety import guard  # noqa: E402
 from skills import loader  # noqa: E402
 
 # Sonnet 5 via the global cross-region profile (user-directed switch from
@@ -36,23 +47,6 @@ from skills import loader  # noqa: E402
 # Beat-critical paths never wait on the LLM regardless (plan D2).
 MODEL_ID = "global.anthropic.claude-sonnet-5"
 REGION = "ap-southeast-1"
-
-SYSTEM = """你是 open-agent-robot,一個開源虛擬人形機器人(Unitree G1 模擬體)。
-你透過使用者 MacBook 的鏡頭看世界、麥克風聽、揚聲器說話,身體顯示在瀏覽器裡。
-語言規則:**嚴格跟隨使用者的語言**——普通話問就用普通話(標準書面用字,絕不混粵語字),
-英文問就用英文;只有使用者明顯講粵語時才用粵語詞彙(注意:語音是普通話引擎,粵語字會被讀成普通話音,所以粵語回覆盡量精簡)。
-回答簡短口語化(閒聊 1-3 句;講故事/教學時可以長,但用短句、適合朗讀)。
-你能看到當前鏡頭畫面(隨訊息附上的圖像)——使用者舉起任何東西問「這是什麼」,直接看圖回答。
-你可以在回答文字的任意位置嵌入動作標籤,身體會同步執行(標籤不會被讀出來):
-[gesture:wave]=揮手 [gesture:nod]=點頭 [gesture:rock]=握拳 [gesture:paper]=張開手掌
-[gesture:scissors]=比剪刀 [gesture:idle]=放下手
-遊戲規則(嚴格遵守):只有使用者「明確主動要求」玩石頭剪刀布時才嵌入 [game:start];
-一次回覆最多一個 [game:start];絕不自己提議連續開局;局間聊天不要慫恿再玩。
-使用者說「停/不玩/stop」時遊戲已被系統強制停止,你只需簡短確認,絕不重新開局。
-當前鏡頭的即時物體檢測附在 <scene> 標籤(物名×數量×置信度,英文類名);
-回答「看到什麼」時把它自然地翻成使用者的語言描述出來,person 通常就是眼前的使用者;
-scene 為空就老實說現在沒看清,不要編造。
-注意:語音識別會有錯字,按發音猜測使用者的真實意思,隨機應變。"""
 
 GAME_TRIGGERS = ("石頭剪刀布", "石头剪刀布", "rock paper scissors", "剪刀石頭布")
 
@@ -73,7 +67,17 @@ class AgentNode(Node):
         except loader.SkillError as exc:
             self.get_logger().error(f"skills disabled: {exc}")
             self.skills = ()
-        self.system_text = SYSTEM + loader.l1_index(self.skills)
+        # The constitution is NOT wrapped in a try. A malformed skill directory
+        # costs the robot a capability, so it degrades; a constitution that will
+        # not load means every boundary clause is absent, and a robot that starts
+        # anyway is the one state safety/guard.py:load_constitution exists to
+        # prevent. Failing here is loud, launch-time, and fixable in one file.
+        self.constitution = guard.load_constitution()
+        assembly = context.assemble(self.constitution,
+                                    skills_index=loader.l1_index(self.skills))
+        self.system_text = assembly.prompt
+        for finding in assembly.findings:
+            self.get_logger().warning(f"context: {finding}")
         self.history: list[dict] = []
         self.busy = threading.Lock()
         self.pub_say = self.create_publisher(String, "/speech/say", 10)

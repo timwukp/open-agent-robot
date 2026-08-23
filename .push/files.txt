@@ -1,11 +1,17 @@
-100644 memory/erase.py
-100644 memory/store.py
-100644 memory/recall.py
-100644 tests/test_erase.py
-100644 tests/test_store.py
-100644 tests/test_recall.py
+# T-C5 的注入半段:提示組裝器 + 把接縫接上部署路徑。
+# 這份清單同時是 infra/redact_scan.py 的檔案清單 —— 它只讀這裡列出的檔案,
+# 所以一份過期的清單會讓脫敏閘對錯的分母印出 0 findings。
+100644 agent/context.py
+100644 agent/agent_node.py
+100644 safety/guard.py
+100644 tests/test_context.py
+# 這個 PR 第一次在清單裡寫註解,而那一行讓脫敏閘 exit 3 —— 兩個讀者對格式不同意。
+100755 infra/redact_scan.py
+100644 tests/test_redact_scan.py
 100644 docs/test-design.md
 100644 README.md
 100644 README.zh-TW.md
 100644 .push/files.txt
+# tests/test_push_branch.py 要求推送機制本身出現在它產出的樹裡:
+# 清單與推送器兩個都要在清單上,否則那棵樹裡的機制無法被複查。
 100755 .push/push_branch.py
