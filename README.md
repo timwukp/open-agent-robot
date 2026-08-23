@@ -75,6 +75,8 @@ web/robot-view/  (browser)               │      ├─ perception/ hand_node  
 | Skills | `skills/loader.py` | Three-level loading: a name + one sentence resident per skill (96 measured input tokens), the body attached to the turn when a **frozen phrase table** — never the model — matches, deeper files pulled through a `read_skill_file` tool confined to `skills/` |
 | Reflexes | `game/game_node.py` | Robot-led chant, resolve window `[T−0.1 s, T+0.6 s]`, stop words honoured in **any** state, per-game cooldown. The model is consulted **once, when the arm is raised**; the beat itself only plays a move that has already been decided, and the suite proves that structurally by deriving the call graph from the source (the beat path cannot reach the model at all) |
 | Opponent model | `game/opponent.py` | Order-2..4 conditional transition tables over the **user's own** (move, outcome) history — never over the robot's moves, which would hand a counter-learner a lever on the context it is predicted from. Exploited only while an **anytime-valid e-value gate** (Ville, δ = 0.05 for the whole lifetime of one opponent) says this person has demonstrably left uniform; otherwise a fair 1/3 coin. Wired into `game_node`: each resolved round is published fire-and-forget to `/game/rps_round` so that `memory_node` stays the only process that writes to disk, and the accumulated table comes back on a **latched** topic at startup — a malformed restore is rejected whole rather than merged. `memory_node` is the next stage and does not exist yet, so today nothing publishes that topic: the table starts empty every boot, which means the first ~120 rounds fall back to the 1/3 coin (81 order-2 contexts cannot be filled by a 20-round session — that is arithmetic, not a tuning choice) |
+| Constitution | `safety/constitution.md`, `safety/guard.py` | Ten numbered clauses that ship as **runtime data, not documentation**: the loader refuses to start if any registered clause id is missing from the file, because a deleted boundary is not a documentation problem. The system prompt is assembled by two functions and concatenated once — instructions (base + constitution) first, then fenced data blocks — and `instruction_region()` **rejects** any argument carrying a fence marker or the data preamble, so recalled text cannot be smuggled into the region the model reads as rules. Caps: 600 spoken characters, 60 turns, 3600 seconds, gestures from the one whitelist in `body/gestures.py` |
+| Memory writer | `memory/store.py` | The single-writer append-only log behind `memory_node`. One writer thread serves both the `events` and `audit` streams — same retention period, same cascade-delete path, so they cannot disagree. Records are numbered inside the lock and published as a **high-water mark** (a batch can be enqueued out of order), a record that fails to serialise is rejected *without* consuming a sequence number, snapshots are replaced by `os.replace` so a reader holding the old file keeps reading intact bytes, and `flush()` raises rather than waiting forever when the writer thread has died |
 | Body | `body/body_node.py` | MuJoCo kinematic puppet of a humanoid with three-fingered Dex3-1 hands (thumb 3 DOF, index 2, middle 2 — 7 per hand), streamed to the browser as MJPEG |
 | Transport | `daemon/main.c`, `gateway/ws_gateway.py` | One WebSocket, binary framed; audio prioritised over video, both flow-controlled |
 
@@ -114,7 +116,8 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 | `speech/`, `perception/`, `agent/`, `game/`, `body/`, `gateway/` | ROS 2 nodes, one concern each |
 | `web/robot-view/` | Single-page face: MJPEG body view + event HUD |
 | `skills/` | Markdown skills plus the loader that gates them. See [`skills/README.md`](skills/README.md) |
-| `tests/` | Offline suite, 268 cases: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
+| `safety/`, `memory/` | The constitution and the single-writer store — pure modules, zero ROS, so their tests run on a laptop |
+| `tests/` | Offline suite, 344 cases: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
 | `infra/` | Provisioning, instance setup, process supervision (`run_ec2.sh` uses pid files, never `pkill` patterns) |
 | `docs/` | Design record: seven research rounds (raw evidence under `docs/evidence/`), the day-0 latency measurements, the demo runbook, the memory/safety design critique, and the [test contract](docs/test-design.md) |
 
@@ -123,6 +126,7 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 ```bash
 pytest -m "not mutation"   # per-save loop
 pytest                     # per-PR: adds the named mutants
+pytest -m mutation         # the mutants alone (65 cases on 2026-08-23)
 infra/check_deploy.sh      # is every node in the repo actually started by the runner?
 ```
 
@@ -137,7 +141,11 @@ into human acceptance testing.
 **Every assertion is paired with a named mutant it must kill** — a mutant that
 produces byte-identical output means the assertion measures the wrong quantity, not
 that the code is safe. Each mutation round also runs a no-mutant control that must
-pass, because a broken harness reports success too. `infra/check_deploy.sh`
+pass, because a broken harness reports success too. The word *every* in that
+sentence is itself checked: a meta test derives what a mutant applier is (it rewrites
+source text **and** turns the result back into a program) and fails if any test that
+calls one is missing the `mutation` marker. It found two modules whose mutants
+`pytest -m mutation` had never been running. `infra/check_deploy.sh`
 distinguishes three exit codes for the same reason: 0 clean, 1 findings, **3 the
 guard could not run** — a guard that cannot run must never report clean.
 
