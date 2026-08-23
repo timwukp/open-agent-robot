@@ -72,6 +72,7 @@ web/robot-view/  (browser)               │      ├─ perception/ hand_node  
 | Sight | `perception/detect_node.py` | YOLO26s compiled to TensorRT (161 FPS measured on the T4), rate-gated to 5 fps, aggregated over a 1 s window |
 | Hands | `perception/hand_node.py` | MediaPipe Tasks HandLandmarker; the RPS classifier deliberately ignores the thumb (people hold it differently) |
 | Reasoning | `agent/agent_node.py` | Bedrock Converse, Claude Sonnet 5 global inference profile, one downscaled camera frame attached per turn for open-vocabulary scene questions |
+| Skills | `skills/loader.py` | Three-level loading: a name + one sentence resident per skill (96 measured input tokens), the body attached to the turn when a **frozen phrase table** — never the model — matches, deeper files pulled through a `read_skill_file` tool confined to `skills/` |
 | Reflexes | `game/game_node.py` | Robot-led chant, resolve window `[T−0.1 s, T+0.6 s]`, stop words honoured in **any** state, per-game cooldown |
 | Body | `body/body_node.py` | MuJoCo kinematic puppet of a humanoid with three-fingered Dex3-1 hands (thumb 3 DOF, index 2, middle 2 — 7 per hand), streamed to the browser as MJPEG |
 | Transport | `daemon/main.c`, `gateway/ws_gateway.py` | One WebSocket, binary framed; audio prioritised over video, both flow-controlled |
@@ -111,8 +112,36 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 | `daemon/` | macOS C daemon (audio, camera, WebSocket client). `make` fetches `miniaudio.h`. |
 | `speech/`, `perception/`, `agent/`, `game/`, `body/`, `gateway/` | ROS 2 nodes, one concern each |
 | `web/robot-view/` | Single-page face: MJPEG body view + event HUD |
+| `skills/` | Markdown skills plus the loader that gates them. See [`skills/README.md`](skills/README.md) |
+| `tests/` | Offline suite: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
 | `infra/` | Provisioning, instance setup, process supervision (`run_ec2.sh` uses pid files, never `pkill` patterns) |
-| `docs/` | Design record: seven research rounds (raw evidence under `docs/evidence/`), the day-0 latency measurements, the demo runbook, and the memory/safety design critique |
+| `docs/` | Design record: seven research rounds (raw evidence under `docs/evidence/`), the day-0 latency measurements, the demo runbook, the memory/safety design critique, and the [test contract](docs/test-design.md) |
+
+## Tests
+
+```bash
+pytest -m "not mutation"   # per-save loop
+pytest                     # per-PR: adds the named mutants
+infra/check_deploy.sh      # is every node in the repo actually started by the runner?
+```
+
+Two properties are worth knowing before reading the suite:
+
+**Nothing here uses a model to judge a test.** Judge-gated pipelines move the
+*measured* pass rate 0.72 → 0.94 while real correctness stays flat at 0.20, and a
+strict three-judge ensemble still accepts 55% of wrong answers. So anything needing
+semantic judgement is either reduced to a machine-checkable proxy or moved out of CI
+into human acceptance testing.
+
+**Every assertion is paired with a named mutant it must kill** — a mutant that
+produces byte-identical output means the assertion measures the wrong quantity, not
+that the code is safe. Each mutation round also runs a no-mutant control that must
+pass, because a broken harness reports success too. `infra/check_deploy.sh`
+distinguishes three exit codes for the same reason: 0 clean, 1 findings, **3 the
+guard could not run** — a guard that cannot run must never report clean.
+
+The full contract, including the items still unimplemented, is
+[`docs/test-design.md`](docs/test-design.md).
 
 ## Design record
 
@@ -148,6 +177,7 @@ dropped on its own. If you intend anything commercial, either obtain an
 Ultralytics licence or swap that one node for a permissively licensed detector.
 
 Model weights carry their own licences (Kokoro, CosyVoice, FunASR, MediaPipe):
-check each before redistributing.
+check each before redistributing. Vendored skills keep their own licence file —
+`skills/critical-thinking/` is MIT.
 
 繁體中文版:[README.zh-TW.md](README.zh-TW.md)

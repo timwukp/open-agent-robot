@@ -1,0 +1,39 @@
+# Frozen trigger-gating fixture (test item T-I2). 20 utterances: 10 that must
+# load the critical-thinking skill, 10 that must not.
+#
+# Frozen means frozen: rows are added, never edited to make a run pass. The hash
+# in tests/fixtures.tsv is what enforces that. If a real utterance is
+# misclassified, it goes in as a new row FIRST and the trigger table changes
+# after — the same discipline as a red-team set (docs/test-design.md §0 rule 3).
+#
+# What this fixture can and cannot prove: 20/20 here means these 20 are handled.
+# It says nothing about the phrases nobody thought of. The negative half is the
+# valuable half, and half of it is deliberately near misses — utterances that
+# contain a *fragment* of a trigger and must still not fire:
+#   分析化學    contains 分析 but not the phrase 分析論證
+#   我的計劃    contains 計劃, which is not a trigger at all (紅隊 is)
+#   紅色的隊服  contains 紅 and 隊 but never adjacent
+#   unbiased    contains the letters of `bias` inside a longer word
+#
+# Columns (tab-separated):  utterance <TAB> expect <TAB> note
+#   expect  the skill name that must load, or `-` for none
+幫我分析論證裡的問題	critical-thinking	zh, direct
+這個說法可靠嗎	critical-thinking	zh, credibility
+幫我紅隊一下這個計劃	critical-thinking	zh, red-team
+你覺得證據夠不夠	critical-thinking	zh, evidence sufficiency
+我想質疑假設站不站得住腳	critical-thinking	zh, assumptions
+這個問題的根本原因是什麼	critical-thinking	zh, root cause
+有冇其他解釋呀	critical-thinking	yue, alternatives
+red-team this deployment plan	critical-thinking	en, hyphenated phrase
+is there a logical fallacy in this	critical-thinking	en, fallacy
+what cognitive bias is at play here	critical-thinking	en, single latin word trigger
+你今天過得怎麼樣	-	zh, small talk
+我們來玩石頭剪刀布	-	zh, game trigger belongs to game_node
+你看到什麼東西	-	zh, vision question
+講一個關於太空人的故事	-	zh, storytelling
+分析化學這門課很難	-	NEAR MISS: 分析 without 論證
+我的計劃是明天去跑步	-	NEAR MISS: 計劃 is not a trigger
+這件紅色的隊服很好看	-	NEAR MISS: 紅 and 隊 not adjacent
+停	-	zh, the L0 stop reflex must never route through a skill
+an unbiased random choice is fine	-	NEAR MISS: `bias` inside `unbiased`
+tell me the weather in singapore	-	en, unrelated

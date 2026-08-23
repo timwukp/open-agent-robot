@@ -40,6 +40,7 @@ web/robot-view/  (瀏覽器)                 │      ├─ perception/ hand_no
 | 看 | `perception/detect_node.py` | YOLO26s 編成 TensorRT(T4 實測 161 FPS),限速到 5 fps,以 1 秒滾動窗聚合 |
 | 手 | `perception/hand_node.py` | MediaPipe Tasks HandLandmarker;猜拳分類器**刻意忽略拇指**(每個人擺法不同) |
 | 想 | `agent/agent_node.py` | Bedrock Converse、Claude Sonnet 5 global 推論設定檔;每輪附一張縮圖,支援開放詞彙的場景問答 |
+| 技能 | `skills/loader.py` | 三級載入:每個技能常駐「名稱 + 一句話」(實測 96 個輸入 token);由**凍結的片語表**(而不是模型)命中時,才把本文附進當前這一回合;更深的檔案由模型透過 `read_skill_file` 自己取,該工具被圍堵在 `skills/` 之內 |
 | 反射 | `game/game_node.py` | 機器人主導口令,判定窗 `[T−0.1 s, T+0.6 s]`;停止詞在**任何**狀態都生效;每局冷卻 |
 | 身體 | `body/body_node.py` | MuJoCo 運動學木偶(Dex3-1 三指手:拇指 3 自由度、食指 2、中指 2,單手 7 個),以 MJPEG 串到瀏覽器 |
 | 傳輸 | `daemon/main.c`、`gateway/ws_gateway.py` | 單一 WebSocket、二進位分幀;音訊優先於視訊,兩者都有流控 |
@@ -78,8 +79,31 @@ open web/robot-view/index.html
 | `daemon/` | macOS C daemon(音訊、相機、WebSocket 客戶端);`make` 會自動抓 `miniaudio.h` |
 | `speech/`、`perception/`、`agent/`、`game/`、`body/`、`gateway/` | ROS 2 節點,一個節點一個關注點 |
 | `web/robot-view/` | 單頁「臉」:MJPEG 身體視圖 + 事件 HUD |
+| `skills/` | Markdown 技能,以及替它們把關的加載器。見 [`skills/README.md`](skills/README.md) |
+| `tests/` | 離線測試:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
 | `infra/` | 開機供裝、環境安裝、行程監管(`run_ec2.sh` 用 pid 檔,**絕不**用 `pkill` 樣式) |
-| `docs/` | 設計記錄:七輪研究(原始證據在 `docs/evidence/`)、day-0 延遲量測、demo 手冊、記憶與安全的設計批判 |
+| `docs/` | 設計記錄:七輪研究(原始證據在 `docs/evidence/`)、day-0 延遲量測、demo 手冊、記憶與安全的設計批判,以及[測試契約](docs/test-design.md) |
+
+## 測試
+
+```bash
+pytest -m "not mutation"   # 每次存檔跑
+pytest                     # 每個 PR 跑:加上具名突變體
+infra/check_deploy.sh      # repo 裡的每個節點,runner 真的會啟動它嗎?
+```
+
+讀這套測試之前有兩件事值得先知道:
+
+**這裡沒有任何一個測試用模型當判官。** 判官當獎勵訊號時,**量到的**通過率從 0.72 升到
+0.94,而真實正確率平在 0.20;嚴格的三判官集成仍然接受 55% 的錯誤答案。所以任何需要語義
+判斷的性質,要嘛降維成機器可檢查的代理量,要嘛移出 CI 進人工驗收。
+
+**每一條斷言都配一個它必須殺掉的具名突變體** —— 突變體產生位元相同的輸出,代表我們測錯了量,
+不代表代碼安全。每一輪突變測試還要跑一個必須綠的**無突變對照**,因為壞掉的 harness 也會報成功。
+`infra/check_deploy.sh` 分三個退出碼是同一個道理:0 乾淨、1 有發現、**3 是守衛跑不起來** ——
+一個跑不起來的守衛,絕不能回報「乾淨」。
+
+完整契約(含尚未實作的項目)在 [`docs/test-design.md`](docs/test-design.md)。
 
 ## 設計記錄
 
@@ -107,5 +131,6 @@ open web/robot-view/index.html
 **但有一個依賴不是**:YOLO26 檢測器透過 Ultralytics 使用,而 Ultralytics 是 **AGPL-3.0**。本 repo 是研究 demo。請注意 `infra/run_ec2.sh start-all` **確實會**啟動檢測節點 —— 授權論證靠的是隔離而不是「預設不開」:`perception/detect_node.py` 對外只發一個 `/detections` JSON 主題,不碰別的東西,所以能單獨替換或整個拿掉。若你要做任何商業用途,請取得 Ultralytics 授權,或把那一個節點換成寬鬆授權的檢測器。
 
 模型權重各有自己的授權(Kokoro、CosyVoice、FunASR、MediaPipe),再散布前請逐一確認。
+外部帶進來的技能各自保留自己的授權檔:`skills/critical-thinking/` 是 MIT。
 
 English: [README.md](README.md)

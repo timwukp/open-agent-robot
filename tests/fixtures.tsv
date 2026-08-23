@@ -12,7 +12,7 @@
 # which prints and never writes: a verifier that can rewrite its own expectations
 # turns a corrupted fixture into a new baseline.
 #
-# Data fixtures arrive in stage S4 (30 eval queries, hand-annotated episode
-# boundaries, the red-team set). The row below keeps the machinery live until then —
-# an empty manifest over an empty directory is vacuously green.
+# The remaining data fixtures arrive in stage S4 (30 eval queries, hand-annotated
+# episode boundaries, the red-team set).
 README.md	1335	23	c0a721b3b59c50157fc84db4d1bee5d62efdb9236a7a566afb867e4090b54b10
+skill_triggers.tsv	2403	39	08c345a1dc2165da35990c3f220c5a5e6f49f4d86387b6742c11fae878274a13

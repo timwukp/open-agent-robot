@@ -14,3 +14,4 @@
 # Columns (tab-separated):  path <TAB> reason
 body/gestures.py	library imported by body_node; its __main__ is a --list-joints dev utility
 infra/day0_measure.py	one-off day-0 measurement script, run by hand on the instance
+skills/measure_l1_tokens.py	one-off T-I1 token measurement against Bedrock, run by hand; its result is pasted into tests/test_skills_loader.py
