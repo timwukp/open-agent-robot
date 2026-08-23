@@ -34,6 +34,7 @@ tts|$PY speech/tts_node.py
 hand|$PY perception/hand_node.py
 detect|$PY perception/detect_node.py
 yue|$HOME/venv-yue/bin/python speech/yue_server.py
+memory|$PY memory/memory_node.py
 agent|$PY agent/agent_node.py
 game|$PY game/game_node.py
 EOF

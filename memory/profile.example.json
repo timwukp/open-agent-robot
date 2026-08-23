@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "facts": [
+    {"kind": "name", "value": "示例使用者(把這行換成你的名字)", "trust": "seed"},
+    {"kind": "call_me", "value": "叫我小名就好", "trust": "seed"},
+    {"kind": "language", "value": "平常說中文,偶爾粵語,技術詞用英文", "trust": "seed"},
+    {"kind": "pronouns", "value": "they/them", "trust": "seed"},
+    {"kind": "occupation", "value": "軟體工程師", "trust": "seed"},
+    {"kind": "location", "value": "新加坡", "trust": "seed"},
+    {"kind": "likes", "value": "猜拳、講故事", "trust": "seed"},
+    {"kind": "dislikes", "value": "機器人一直搶話", "trust": "seed"},
+    {"kind": "allergy", "value": "花生", "trust": "seed"},
+    {"kind": "household", "value": "同住兩人", "trust": "seed"},
+    {"kind": "pet", "value": "一隻貓", "trust": "seed"},
+    {"kind": "routine", "value": "通常 19:00 後在家", "trust": "seed"},
+    {"kind": "goal", "value": "練粵語聽力", "trust": "seed"},
+    {"kind": "skill_interest", "value": "粵語日常對話", "trust": "seed"},
+    {"kind": "device", "value": "桌上有一台筆電", "trust": "seed"},
+    {"kind": "boundary", "value": "不要聊工作壓力", "trust": "seed"},
+    {"kind": "note", "value": "喜歡直接的回答,不要客套", "trust": "seed"}
+  ]
+}
