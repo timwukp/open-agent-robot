@@ -12,7 +12,9 @@
 # which prints and never writes: a verifier that can rewrite its own expectations
 # turns a corrupted fixture into a new baseline.
 #
-# The remaining data fixtures arrive in stage S4 (30 eval queries, hand-annotated
-# episode boundaries, the red-team set).
-README.md	1335	23	c0a721b3b59c50157fc84db4d1bee5d62efdb9236a7a566afb867e4090b54b10
+# Still outstanding: the 30 evaluation queries and the hand-annotated episode
+# boundaries (S4, both blocked on a real log plus one human annotation pass) and the
+# S7 red-team set. See tests/fixtures/README.md for what each present file is.
+README.md	2452	41	7c1b3b9b8c3712dc7f1705e076d51df5ab58ce97a09c1c06b746ced0b6e74625
 skill_triggers.tsv	2403	39	08c345a1dc2165da35990c3f220c5a5e6f49f4d86387b6742c11fae878274a13
+why_goal_rejects.jsonl	4592	31	1584422688e738f67c688acd4732a78d4a7521d457dd73edd88d98f1f385cfb2

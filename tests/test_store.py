@@ -126,10 +126,18 @@ SYNC_DIR_AFTER_APPEND = "        if touched:\n            self._sync_dir()"
 HIGH_WATER = "                    self._publish(high)"
 
 
+# Every `events` record has to carry a reason from `store.GOALS` (§S4.5), and these
+# tests are about the writer rather than the vocabulary — `tests/test_why.py` owns
+# that. One named constant instead of a literal per call site, so this file has a
+# single place where the enum is read and no second copy of any member.
+WHY = {"goal": "user_requested_answer"}
+
+
 # ------------------------------------------------------- T-A1 single writer (D)
 def _produce(store, stream: str, who: int, n: int) -> None:
     for i in range(n):
-        store.append(stream, {"who": f"{who:02d}", "n": f"{i:04d}", "pad": PAD})
+        store.append(stream, {"who": f"{who:02d}", "n": f"{i:04d}", "pad": PAD,
+                              "why": WHY})
 
 
 @pytest.mark.slow
@@ -347,7 +355,7 @@ import os, sys
 sys.path.insert(0, {pkg!r})
 from memory.store import Store
 s = Store({root!r}, _allow_ephemeral=True)
-s.append("events", {{"kind": "survives"}})
+s.append("events", {{"kind": "survives", "why": {{"goal": "user_requested_answer"}}}})
 s.flush()
 os._exit(0)
 """
@@ -479,7 +487,7 @@ def test_the_constructor_refuses_a_bad_location_and_creates_nothing(tmp_path):
 def test_an_accepted_root_is_created_private(tmp_path):
     with make_store(tmp_path) as store:
         assert store.root.stat().st_mode & 0o777 == st.ROOT_MODE
-        store.append("events", {"kind": "x"})
+        store.append("events", {"kind": "x", "why": WHY})
         store.flush()
         assert store.path_for("events").stat().st_mode & 0o777 == 0o600
 
@@ -560,7 +568,7 @@ def test_the_store_rejects_what_would_make_the_file_unreadable(tmp_path):
         with pytest.raises(st.StoreError, match="must be a dict"):
             store.append("events", ["not", "a", "dict"])
         with pytest.raises(st.StoreError, match="not JSON-serialisable"):
-            store.append("events", {"kind": object()})
+            store.append("events", {"kind": object(), "why": WHY})
         for reserved in ("ts", "seq"):
             with pytest.raises(st.StoreError, match=f"'{reserved}' is set by the store"):
                 store.append("events", {reserved: 0})
@@ -571,10 +579,15 @@ def test_the_store_rejects_what_would_make_the_file_unreadable(tmp_path):
 
 
 def test_the_line_format_is_key_sorted_so_a_diff_is_reviewable(tmp_path):
+    # `audit` rather than `events` because that stream is exempt from the §S4.5
+    # reason requirement, so the asserted line stays a statement about key sorting
+    # and nothing else. On `events` the record would have to carry a `why`, and the
+    # expected string would then also be asserting the shape of that field — two
+    # claims in one literal, where a change to either moves the same line.
     with make_store(tmp_path, clock=lambda: 1.5) as store:
-        store.append("events", {"zebra": 1, "alpha": 2})
+        store.append("audit", {"zebra": 1, "alpha": 2})
         store.flush()
-        line = store.path_for("events").read_text(encoding="utf-8").rstrip("\n")
+        line = store.path_for("audit").read_text(encoding="utf-8").rstrip("\n")
     assert line == '{"alpha": 2, "seq": 1, "ts": 1.5, "zebra": 1}'
 
 
@@ -587,12 +600,12 @@ def test_the_format_and_rejection_mutants_go_red(tmp_path, anchor, replacement, 
     mutant = load_mutant(tmp_path, (anchor, replacement))
     with make_store(tmp_path, module=mutant, clock=lambda: 1.5) as store:
         if label == "unsorted keys":
-            store.append("events", {"zebra": 1, "alpha": 2})
+            store.append("audit", {"zebra": 1, "alpha": 2})
             store.flush()
-            line = store.path_for("events").read_text(encoding="utf-8").rstrip("\n")
+            line = store.path_for("audit").read_text(encoding="utf-8").rstrip("\n")
             assert line != '{"alpha": 2, "seq": 1, "ts": 1.5, "zebra": 1}'
         else:
-            store.append("events", {"ts": 99.0})
+            store.append("events", {"ts": 99.0, "why": WHY})
             store.flush()
             assert store.read("events")[0]["ts"] == 99.0
 
@@ -641,7 +654,7 @@ def test_flush_raises_instead_of_hanging_when_the_writer_dies(tmp_path, monkeypa
     # to every other thread in this interpreter for as long as it is installed.
     monkeypatch.setattr(st.Store, "_sync", dies)
     store = make_store(tmp_path)
-    store.append("events", {"kind": "x"})
+    store.append("events", {"kind": "x", "why": WHY})
     box: list[BaseException | None] = []
     worker = threading.Thread(target=lambda: box.append(_capture(store)))
     worker.start()
@@ -649,7 +662,7 @@ def test_flush_raises_instead_of_hanging_when_the_writer_dies(tmp_path, monkeypa
     assert not worker.is_alive(), "flush() never returned after the writer died"
     assert isinstance(box[0], st.StoreError)
     with pytest.raises(st.StoreError, match="writer thread died"):
-        store.append("events", {"kind": "y"})
+        store.append("events", {"kind": "y", "why": WHY})
 
 
 @pytest.mark.mutation

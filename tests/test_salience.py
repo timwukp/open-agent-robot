@@ -49,6 +49,12 @@ from memory import store as st  # noqa: E402
 
 USER = {"role": "user", "text": "我喜歡芫茜,記住"}
 
+# §S4.5: an `events` record carries a reason from `store.GOALS`. Only the cases that
+# get past `RECORD_FIELD_DEPS` need one here — the pairing rule runs first, so a test
+# asserting *that* refusal must not supply a `why`, or it would still pass with the
+# pairing rule deleted and the reason check refusing the record instead.
+WHY = {"goal": "user_requested_remember"}
+
 
 def make_store(tmp_path: Path, module=st, **kw):
     """Same visible exemption as tests/test_store.py: tmp_path is ephemeral."""
@@ -305,7 +311,7 @@ def test_stamp_does_not_mutate_the_caller_record():
 
 def test_the_store_accepts_a_stamped_record(tmp_path):
     with make_store(tmp_path) as store:
-        store.append("events", sal.stamp({"kind": "turn"}, USER))
+        store.append("events", sal.stamp({"kind": "turn", "why": WHY}, USER))
         store.flush()
         (row,) = store.read("events")
     assert row["salience_formula"] == sal.FORMULA
@@ -337,15 +343,15 @@ def test_the_pairing_refusal_precedes_the_dead_writer_check(tmp_path):
         with pytest.raises(st.StoreError, match="salience_formula"):
             store.append("events", {"salience": 0.5})
         with pytest.raises(st.StoreError, match="writer thread died"):
-            store.append("events", {"kind": "turn"})
+            store.append("events", {"kind": "turn", "why": WHY})
         store._failure = None
 
 
 def test_a_record_carrying_both_fields_is_untouched_by_the_rule(tmp_path):
     """The rule must not fire on a record that already complies, nor on one with neither."""
     with make_store(tmp_path) as store:
-        store.append("events", {"salience": 0.1, "salience_formula": "x"})
-        store.append("events", {"kind": "turn"})
+        store.append("events", {"salience": 0.1, "salience_formula": "x", "why": WHY})
+        store.append("events", {"kind": "turn", "why": WHY})
         store.flush()
         assert len(store.read("events")) == 2
 
@@ -556,7 +562,7 @@ def test_mutant_the_store_drops_the_pairing_rule(tmp_path):
     m = load_mutant(tmp_path, "store", (PAIRING, "        for field, companion in []:\n"
                                                  "            if False:\n"))
     with make_store(tmp_path, module=m) as store:
-        store.append("events", {"kind": "turn", "salience": 0.5})
+        store.append("events", {"kind": "turn", "salience": 0.5, "why": WHY})
         store.flush()
         (row,) = store.read("events")
     assert "salience_formula" not in row, \
