@@ -304,7 +304,7 @@ def _plan_card(root: Path, episode: str, *, attrib: Mapping[int, str]) -> Remova
         changed = True
         remaining = [e for e in fact.source_episode_ids if e != episode]
         if remaining:
-            refs.append(f"{recall.CARD_ARTIFACT}#{i}@{episode}")
+            refs.append(recall.card_ref(i, episode))
             entry = fact.as_dict()
             entry["source_episode_ids"] = remaining
             facts.append(entry)
@@ -313,7 +313,7 @@ def _plan_card(root: Path, episode: str, *, attrib: Mapping[int, str]) -> Remova
             # refuses it, because a fact with no episode behind it can never be
             # removed by a deletion. So the fact goes rather than being kept
             # sourceless, which is the same rule stated from the other side.
-            refs.append(f"{recall.CARD_ARTIFACT}#{i}")
+            refs.append(recall.card_ref(i))
     if not changed:
         return Removal(recall.CARD_ARTIFACT)
     body = {"version": card.version, "facts": facts}
@@ -349,7 +349,7 @@ def _plan_rps(root: Path, episode: str, *, attrib: Mapping[int, str]) -> Removal
     for i, entry in enumerate(rounds):
         eid = entry.get("episode")
         if eid == episode:
-            refs.append(f"{recall.RPS_ARTIFACT}#{i}")
+            refs.append(recall.rps_ref(i))
             continue
         if eid is None:
             unattributed += 1

@@ -148,6 +148,45 @@ BM25_K1 = 1.5
 BM25_B = 0.75
 
 
+# ------------------------------------------------------------------ hit refs
+#
+# `Hit.ref` is a join key, not a label. Three readers already depend on its exact
+# spelling: `deletion_findings` reports it, `memory/erase.py` rebuilds card and rps
+# refs to compare against what these paths emit, and S6's ranking arms join a hit
+# back to the event record that carries its salience. Before these functions existed
+# the format had **nine producers across two production modules** (six here, three in
+# `erase.py`), which is the shape of the `.push/files.txt` divergence: two writers of
+# one format stay in agreement only for as long as nobody edits one of them, and the
+# reader that notices is whichever one happens to compare.
+#
+# So there is one creator per ref shape and the producers call it. A drift then has
+# to be a change to these four functions, where the tests are.
+def event_ref(seq: int) -> str:
+    """The ref for store sequence `seq`. Events are addressed by seq, never by index."""
+    return f"{EVENTS_ARTIFACT}#{int(seq)}"
+
+
+def episode_ref(episode_id: str) -> str:
+    """The ref for a warm-layer entry, addressed by its minted id."""
+    return f"{EPISODES_ARTIFACT}#{episode_id}"
+
+
+def card_ref(index: int, episode: str | None = None) -> str:
+    """The ref for card fact `index`, optionally naming which source episode it cites.
+
+    A fact citing two episodes produces one hit per source, so the episode has to be
+    part of the ref: without it, deleting one of the two would look like it removed
+    the whole row, and deleting the other would look like it removed nothing.
+    """
+    base = f"{CARD_ARTIFACT}#{int(index)}"
+    return base if episode is None else f"{base}@{episode}"
+
+
+def rps_ref(index: int) -> str:
+    """The ref for round `index` of the opponent table."""
+    return f"{RPS_ARTIFACT}#{int(index)}"
+
+
 class PathSpec:
     """One retrieval path's declaration: what it reads and what it needs to run."""
 
@@ -769,11 +808,10 @@ class Retriever:
                 # `Fact` already guarantees this only happens for a seed; the branch
                 # is explicit so a future trust level cannot arrive here silently.
                 marker = SEED if fact.trust == TRUST_SEED else ORPHAN
-                hits.append(Hit("card", marker, line, 1.0, f"{CARD_ARTIFACT}#{i}"))
+                hits.append(Hit("card", marker, line, 1.0, card_ref(i)))
                 continue
             for eid in sources:
-                hits.append(Hit("card", eid, line, 1.0,
-                                f"{CARD_ARTIFACT}#{i}@{eid}"))
+                hits.append(Hit("card", eid, line, 1.0, card_ref(i, eid)))
         return hits
 
     def _run_structured(self, text: str, goals, k: int) -> list[Hit]:
@@ -792,7 +830,7 @@ class Retriever:
         for event in events:
             hits.append(Hit("structured", attrib.get(event["seq"], ORPHAN),
                             str(event.get("text", "")), 1.0,
-                            f"{EVENTS_ARTIFACT}#{event['seq']}"))
+                            event_ref(event["seq"])))
         return hits
 
     def _run_lexical(self, text: str, goals, k: int) -> list[Hit]:
@@ -807,7 +845,7 @@ class Retriever:
         for event, doc, score in zip(events, docs, scores):
             if score > 0.0:
                 hits.append(Hit("lexical", attrib.get(event["seq"], ORPHAN), doc,
-                                score, f"{EVENTS_ARTIFACT}#{event['seq']}"))
+                                score, event_ref(event["seq"])))
         return hits
 
     def _run_semantic(self, text: str, goals, k: int) -> list[Hit]:
@@ -827,7 +865,7 @@ class Retriever:
             if stored is None:
                 continue
             hits.append(Hit("semantic", entry["id"], entry["summary"],
-                            cosine(vector, stored), f"{EPISODES_ARTIFACT}#{entry['id']}"))
+                            cosine(vector, stored), episode_ref(entry["id"])))
         return hits
 
     def _run_rps(self, text: str, goals, k: int) -> list[Hit]:
@@ -849,7 +887,7 @@ class Retriever:
             # it instead of counting it as a clean zero.
             eid = entry.get("episode") or ORPHAN
             label = f"{entry.get('user', '?')}/{entry.get('outcome', '?')}"
-            hits.append(Hit("rps", eid, label, 1.0, f"{RPS_ARTIFACT}#{i}"))
+            hits.append(Hit("rps", eid, label, 1.0, rps_ref(i)))
         return hits
 
     # ------------------------------------------------------------- internals
