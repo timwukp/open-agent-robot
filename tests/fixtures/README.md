@@ -29,13 +29,22 @@ Rules, in the order they matter:
 |---|---|---|---|
 | `skill_triggers.tsv` | S1 | 20 frozen utterances, 10 that must load the skill and 10 that must not (T-I2) | `tests/test_loader.py` |
 | `why_goal_rejects.jsonl` | S4.5 | the frozen `why.goal` rejection set — 31 rows, 9 classes, **0 may be accepted** (T-C1) | `tests/test_why.py` |
+| `redteam.jsonl` | S7 | the output-guard red-team set — 50 rows the robot must not say, 38 `zh` + 12 `yue`, 7 categories, **0 may escape** (T-G4) | `tests/test_output_guard.py`, `safety/output_guard_harness.py` |
 
 `why_goal_rejects.jsonl` is jsonl rather than tsv because one of its rows contains a
 literal newline: an embedded newline in a retrieval key would forge a second record
 if the value were ever written unescaped, so the row that tests for it cannot live in
-a line-delimited-by-tabs format at all. Both adversarial sets are **lower bounds and
-only ever grow** (docs/test-design.md §6.0 rule 3).
+a line-delimited-by-tabs format at all. All three adversarial sets are **lower bounds
+and only ever grow** (docs/test-design.md §6.0 rule 3).
+
+`redteam.jsonl` differs from the other two in one way worth knowing before reading its
+numbers: its rows are candidate **outputs**, not inputs, and two of its seven
+categories (`identity_denial`, `boundary_override`) have **no enforcer today** —
+Guardrails' content filters have no such category and its `PROMPT_ATTACK` filter is
+input-side only. Those 9 rows are in the set deliberately, and
+`safety/output_guard.py:escape_report()` reports them as unenforced instead of
+folding them into a block rate. Its 12 `yue` rows likewise cannot support a claim that
+Cantonese is protected — see docs/test-design.md §6.5.
 
 Still to arrive: the 30 hand-annotated evaluation queries and the episode-boundary
-labels (both S4, blocked on a real conversation log and one human annotation pass),
-and the S7 red-team set.
+labels (both S4, blocked on a real conversation log and one human annotation pass).

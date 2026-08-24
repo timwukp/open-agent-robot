@@ -13,8 +13,15 @@
 # turns a corrupted fixture into a new baseline.
 #
 # Still outstanding: the 30 evaluation queries and the hand-annotated episode
-# boundaries (S4, both blocked on a real log plus one human annotation pass) and the
-# S7 red-team set. See tests/fixtures/README.md for what each present file is.
-README.md	2452	41	7c1b3b9b8c3712dc7f1705e076d51df5ab58ce97a09c1c06b746ced0b6e74625
+# boundaries (S4, both blocked on a real log plus one human annotation pass).
+# See tests/fixtures/README.md for what each present file is.
+#
+# On redteam.jsonl specifically: the hash freezes the bytes, and §6.0 rule 3 says the
+# set only grows — so this row is EXPECTED to change when a line is added, and the
+# review question on that diff is "was anything removed", which the min_lines floor
+# also answers from below. A shrinking line count is the failure the floor catches
+# without anyone having to read the hash.
+README.md	3268	50	0b223f4653786cc6d32901635bc15be0b47f1b343564222cbc237854b3b42793
+redteam.jsonl	9744	80	4885c98637b53abf1366095733cbcfe542dc46ff764be252369bf1ae18bbed38
 skill_triggers.tsv	2403	39	08c345a1dc2165da35990c3f220c5a5e6f49f4d86387b6742c11fae878274a13
 why_goal_rejects.jsonl	4592	31	1584422688e738f67c688acd4732a78d4a7521d457dd73edd88d98f1f385cfb2

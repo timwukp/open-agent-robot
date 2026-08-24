@@ -1,19 +1,34 @@
-# S6 的離線半段:三支排序臂 + 拒絕下結論的 harness(T-F6)。
+# S7 的離線半段:句級異步輸出守衛 + 凍結紅隊集(T-G1..T-G4)。
 # 這份清單同時是 infra/redact_scan.py 的檔案清單 —— 它只讀這裡列出的檔案,
 # 所以一份過期的清單會讓脫敏閘對錯的分母印出 0 findings。
-100644 memory/rank.py
-# 100644, not 100755: it has no shebang and is run as `python3 memory/rank_harness.py`,
-# and the mode in this list has to be the mode on disk or the push silently changes it.
-100644 memory/rank_harness.py
-100644 tests/test_rank.py
-# 九個 ref 生產者收成四個創造者:S6 的臂要把命中接回帶 salience 的事件記錄,
-# 而那個 join key 之前有兩個生產模組各自拼字串。recall 與 erase 一起改,
-# 兩邊的測試也一起改,否則「兩個讀者一個格式」的教訓會在這裡重演。
-100644 memory/recall.py
-100644 tests/test_recall.py
-100644 memory/erase.py
-100644 tests/test_erase.py
-# rank_harness.py 是手動跑的 entrypoint,豁免要寫成一行可審查的宣告。
+#
+# 清單本身由**與 base tree 對帳**產生,不是憑記憶列的:把工作樹每個檔案的
+# `git hash-object` 跟 s6-rank-ablation 的 tree 比一次,新增與變更兩份名單就是這裡。
+# 對出來的差集裡另外五個檔案刻意不在清單上:daemon/miniaudio.h 與
+# daemon/oar-daemon 是廠商標頭與建置產物,infra/local.env 與 infra/ssh_config
+# 帶帳號專屬值且 git-ignored,.push/message.txt 是這次推送的訊息本體。
+#
+# 100644, not 100755: output_guard_harness.py 有 shebang 但是以
+# `python3 safety/output_guard_harness.py --guardrail-id …` 執行的,
+# 而清單裡的模式必須等於磁碟上的模式,否則推送會靜靜地改掉它。
+100644 safety/output_guard.py
+100644 safety/output_guard_harness.py
+100644 tests/test_output_guard.py
+# 凍結集進 tests/fixtures/,因為 T-J3 的 manifest 已經在那裡守著 hash 與
+# 「多一個沒登錄的檔案就紅」;把它擺在守衛旁邊等於重寫一遍同樣的保護。
+100644 tests/fixtures/redteam.jsonl
+100644 tests/fixtures.tsv
+100644 tests/fixtures/README.md
+# /speech/say 的鍵普查從兩份各自的 AST 走訪收成一份共用的導出:S7 把 `id` 的
+# 預設值搬進 voices.request_id() 之後,只讀 tts_node.py 的普查導出 {cache,text} ——
+# 介面鍵「不見了」跟「被移除了」在那份普查裡長得一模一樣。
+100644 tests/say_payload.py
+100644 tests/test_disclosure.py
+100644 tests/test_guard.py
+# 話語 id 的唯一創造者:退路 id 是構造出來的,所以退路命名空間與保留命名空間不相交。
+100644 speech/voices.py
+100644 speech/tts_node.py
+# output_guard_harness.py 是手動跑的 entrypoint,豁免要寫成一行可審查的宣告。
 100644 infra/standalone_entrypoints.tsv
 100644 docs/test-design.md
 100644 README.md

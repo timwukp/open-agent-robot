@@ -56,9 +56,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SAFETY_DIR = REPO_ROOT / "safety"
 GUARD_PY = SAFETY_DIR / "guard.py"
 CONSTITUTION_MD = SAFETY_DIR / "constitution.md"
-TTS_NODE_PY = REPO_ROOT / "speech" / "tts_node.py"
 GAME_NODE_PY = REPO_ROOT / "game" / "game_node.py"
 
+import say_payload                   # noqa: E402
 from memory import store as st       # noqa: E402
 from safety import guard as gd       # noqa: E402
 from doubles import FakeClock, LyingBedrockClient  # noqa: E402
@@ -647,37 +647,23 @@ def test_every_audit_action_and_decision_is_reachable_and_documented() -> None:
 
 
 # ------------------------------------ the caps that have nowhere to attach yet
-def _request_keys(path: Path, var_names: tuple[str, ...] = ("req", "d")) -> set[str]:
-    """Every string key read off a request dict in `path`, derived from its AST."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    keys: set[str] = set()
-    for node in ast.walk(tree):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "get"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id in var_names and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)):
-            keys.add(node.args[0].value)
-        if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
-                and node.value.id in var_names
-                and isinstance(node.slice, ast.Constant)
-                and isinstance(node.slice.value, str)):
-            keys.add(node.slice.value)
-    return keys
-
-
 def test_the_say_request_carries_no_amplitude_the_model_could_ask_for() -> None:
     """The volume cap the plan asked for, expressed as the invariant that replaces it.
 
     There is no volume in this stack: `daemon/main.c` hands miniaudio playback
-    frames with no gain stage, and `speech/tts_node.py` reads a closed set of keys
-    off the `/speech/say` request. A cap function guarding a parameter no code can
-    set would be a component with no deploy path, so the assertion is on the seam
-    instead — the first change that gives the model an amplitude to ask for turns
-    this red and has to argue for itself.
+    frames with no gain stage, and the `/speech/say` request has a closed set of keys
+    its readers read. A cap function guarding a parameter no code can set would be a
+    component with no deploy path, so the assertion is on the seam instead — the first
+    change that gives the model an amplitude to ask for turns this red and has to
+    argue for itself.
+
+    The census lives in `tests/say_payload.py` rather than here because
+    `tests/test_disclosure.py` needs the same set, and two AST walks over one format
+    is the defect where each pins its own answer and one stays green while the format
+    moves. It derives its reader set from `tts_node.py`'s imports, so the `id` reader
+    living in `speech/voices.py` is counted.
     """
-    keys = _request_keys(TTS_NODE_PY)
+    keys = say_payload.say_payload_keys()
     assert keys, "derived zero keys — the derivation broke, this is not a pass"
     assert keys == {"text", "id", "cache"}, (
         f"the /speech/say key set changed to {sorted(keys)}; if this adds an "
