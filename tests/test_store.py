@@ -134,10 +134,37 @@ WHY = {"goal": "user_requested_answer"}
 
 
 # ------------------------------------------------------- T-A1 single writer (D)
+# The >8 KB payload for each stream, in the shape that stream is allowed to hold.
+#
+# `events` takes the flat `pad`. `audit` cannot: `AUDIT_FIELDS` closed the field set
+# and `AUDIT_TEXT_CEILING` bounds every string, so an 8300-character audit string is
+# no longer a state production can reach, and a test that forced one would be
+# exercising a shape the writer must refuse. A tombstone's `removed` list is the
+# audit record that *is* legitimately large — a deletion naming two thousand sequence
+# numbers is one file's worth of refs — so the partial-write pressure this test needs
+# survives intact and now comes from a record the system can really produce.
+BIG_REFS = list(range(2000))
+
+
+def _record(stream: str, who: int, i: int) -> dict:
+    if stream == "events":
+        return {"who": f"{who:02d}", "n": f"{i:04d}", "pad": PAD, "why": WHY}
+    return {"kind": "tombstone", "episode": f"ep-{who:02d}{i:04d}",
+            "removed": {"events.jsonl": BIG_REFS}, "why": WHY}
+
+
+def _payload_of(stream: str, rec: dict):
+    """The field a splice would corrupt, per stream."""
+    return rec["pad"] if stream == "events" else rec["removed"]["events.jsonl"]
+
+
+def _expected_payload(stream: str):
+    return PAD if stream == "events" else BIG_REFS
+
+
 def _produce(store, stream: str, who: int, n: int) -> None:
     for i in range(n):
-        store.append(stream, {"who": f"{who:02d}", "n": f"{i:04d}", "pad": PAD,
-                              "why": WHY})
+        store.append(stream, _record(stream, who, i))
 
 
 @pytest.mark.slow
@@ -169,7 +196,8 @@ def test_four_producers_land_exactly_four_thousand_intact_lines(tmp_path):
             # one that swapped equal-length halves.
             for line, rec in zip(lines, records):
                 assert line == json.dumps(rec, ensure_ascii=False, sort_keys=True)
-                assert rec["pad"] == PAD, f"{stream} seq {rec['seq']}: payload spliced"
+                assert _payload_of(stream, rec) == _expected_payload(stream), \
+                    f"{stream} seq {rec['seq']}: payload spliced"
             seqs.extend(r["seq"] for r in records)
 
     assert sorted(seqs) == list(range(1, 4001)), "sequence numbers are not a bijection"
@@ -587,15 +615,24 @@ def test_the_store_rejects_what_would_make_the_file_unreadable(tmp_path):
 
 def test_the_line_format_is_key_sorted_so_a_diff_is_reviewable(tmp_path):
     # `audit` rather than `events` because that stream is exempt from the §S4.5
-    # reason requirement, so the asserted line stays a statement about key sorting
-    # and nothing else. On `events` the record would have to carry a `why`, and the
-    # expected string would then also be asserting the shape of that field — two
-    # claims in one literal, where a change to either moves the same line.
+    # reason requirement, so the asserted line comes closest to being a statement
+    # about key sorting and nothing else. On `events` the record would have to carry
+    # a `why`, and the expected string would then also assert the shape of that
+    # field — two claims in one literal, where a change to either moves the same line.
+    #
+    # It used to be `{"zebra": 1, "alpha": 2}`, which made that claim count exactly
+    # one, and `AUDIT_FIELDS` took that away: the audit stream is no longer
+    # schema-free, so no record on either stream can have arbitrary key names any
+    # more. The cost is paid here and written down rather than hidden — the literal
+    # now also asserts `AUDIT_FIELDS["profile_loaded"]`, so a field renamed there
+    # moves this line too. The keys are supplied out of order on purpose, and
+    # `locked` sits between `kind` and `seq`, so an unsorted writer cannot produce
+    # this string by luck.
     with make_store(tmp_path, clock=lambda: 1.5) as store:
-        store.append("audit", {"zebra": 1, "alpha": 2})
+        store.append("audit", {"locked": True, "kind": "profile_loaded", "facts": 2})
         store.flush()
         line = store.path_for("audit").read_text(encoding="utf-8").rstrip("\n")
-    assert line == '{"alpha": 2, "seq": 1, "ts": 1.5, "zebra": 1}'
+    assert line == ('{"facts": 2, "kind": "profile_loaded", "locked": true, "seq": 1, "ts": 1.5}')
 
 
 @pytest.mark.mutation
@@ -607,10 +644,12 @@ def test_the_format_and_rejection_mutants_go_red(tmp_path, anchor, replacement, 
     mutant = load_mutant(tmp_path, (anchor, replacement))
     with make_store(tmp_path, module=mutant, clock=lambda: 1.5) as store:
         if label == "unsorted keys":
-            store.append("audit", {"zebra": 1, "alpha": 2})
+            store.append("audit", {"locked": True, "kind": "profile_loaded",
+                                   "facts": 2})
             store.flush()
             line = store.path_for("audit").read_text(encoding="utf-8").rstrip("\n")
-            assert line != '{"alpha": 2, "seq": 1, "ts": 1.5, "zebra": 1}'
+            assert line != ('{"facts": 2, "kind": "profile_loaded", "locked": true, '
+                            '"seq": 1, "ts": 1.5}')
         else:
             store.append("events", {"ts": 99.0, "why": WHY})
             store.flush()
@@ -1065,8 +1104,8 @@ def test_the_counter_is_shared_across_streams_on_recovery(tmp_path):
     """
     first = make_store(tmp_path)
     try:
-        first.append("audit", {"kind": "guard"})
-        first.append("audit", {"kind": "guard"})
+        first.append("audit", {"kind": "audit"})
+        first.append("audit", {"kind": "audit"})
         first.flush()
     finally:
         first.close()

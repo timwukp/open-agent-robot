@@ -108,8 +108,9 @@ def build(tmp_path: Path, *, card=True, rps=True) -> "st.Store":
     # absent, `registry_findings` has nothing to classify and `coverage_findings`
     # nothing to report — both would be green for the same reason an empty scan is,
     # and the retained-stream assertions would be testing a file that never existed.
-    store.append("audit", {"kind": "guard", "decision": "allow",
-                           "rule": "length_cap", "ref": "events#1"})
+    store.append("audit", {"kind": "audit", "action": "reply_truncated",
+                           "decision": "modified", "reason": "the length cap fired",
+                           "uid": "events#1"})
     store.flush()
     episodes = [
         {"id": E, "seqs": mine, "summary": "使用者自我介紹:名字 Tim,住新加坡,愛烏龍茶",
@@ -411,6 +412,14 @@ def test_the_tombstone_names_ids_and_counts_and_quotes_no_deleted_text(tmp_path)
         assert stone["why"] == {"goal": er.FORGET_GOAL}
         assert set(stone) <= set(er.TOMBSTONE_FIELDS)
         assert stone["removed"][rc.EVENTS_ARTIFACT] == [1, 2, 3]
+        # T-C7's driven control for the `tombstone` kind, here because this is the only
+        # fixture rich enough to satisfy `delete`'s preconditions and a second copy of
+        # it would be a second reader free to drift. `TOMBSTONE_FIELDS` above is the
+        # read side; this is the write side, on the record the real deletion produced.
+        # Their agreement as *sets* is asserted in tests/test_audit_schema.py — a
+        # writer that accepts what this reader rejects is a deletion that cannot be
+        # proven, and each side pinned alone stays green while the other moves.
+        assert st.check_audit(stone) == "tombstone"
     finally:
         store.close()
 

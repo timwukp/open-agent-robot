@@ -609,22 +609,42 @@ def test_the_audit_stream_shares_the_one_writer(tmp_path: Path) -> None:
     This is the seam assertion: the record `guard` builds is exactly what
     `Store.append("audit", ...)` accepts, and the two files are developed together
     precisely so that this cannot drift into two writers touching one directory.
+
+    **This test used to pass `utterance="來揮手"` and assert it read back**, which is
+    why it is worth reading rather than skimming. Sharing one writer makes the
+    *ordering* safe; it says nothing about erasability, and `REWRITABLE["audit"]` is
+    `False` while `memory.erase.RETAINED` lists `audit.jsonl`. So the old version
+    asserted, as green contract, that a sentence the user said lands in the one stream
+    no deletion can reach. The seam claim it was making is real and is kept; the
+    utterance is gone, and its absence is now asserted here too rather than only in
+    `tests/test_audit_schema.py` — a record built by this creator has to be refused by
+    that writer, and this is the file where someone would add the field back.
     """
     clock = FakeClock(start=1.5)
     store = st.Store(tmp_path / "data", clock=clock.time, _allow_ephemeral=True)
     try:
         rec = gd.audit_record("gesture_rejected", "modified",
                              "gesture '__nope__' is not in the whitelist",
-                             utterance="來揮手", tag="__nope__")
+                             tag="__nope__")
         seq = store.append("audit", rec)
         store.flush(seq)
         rows = store.read("audit")
+        # The creator still forwards **fields, so it builds the old record happily.
+        # The writer is where that stops — which is the whole placement argument:
+        # a check in the creator is advice to the one caller that used it.
+        quoting = gd.audit_record("gesture_rejected", "modified", "not whitelisted",
+                                  utterance="來揮手", tag="__nope__")
+        assert quoting["utterance"] == "來揮手"
+        with pytest.raises(st.StoreError, match="undeclared field.*utterance"):
+            store.append("audit", quoting)
+        assert store.read("audit") == rows, "the refused record dented the log"
     finally:
         store.close()
     assert len(rows) == 1
     assert rows[0]["seq"] == seq and rows[0]["ts"] == 1.5
     assert rows[0]["action"] == "gesture_rejected"
     assert rows[0]["tag"] == "__nope__"
+    assert "utterance" not in rows[0]
     assert store.read("events") == [], "audit must not land in the event stream"
 
 

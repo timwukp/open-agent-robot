@@ -1,67 +1,80 @@
-# 兩張圖,以及讓它們不能說謊的那份普查。
+# 稽核紀錄的內容 schema:把一句被寫成合約的矛盾關掉。
 #
-# `docs/architecture.svg` 從手畫改成**生成**:節點、topic、缺口全部來自
-# `infra/ros_census.py`,而它執行 `OAR_DRY=1 infra/run_ec2.sh start-all` 而不是
-# 解析一份清單 —— 所以一個不再被啟動的節點也就不再被畫出來。
-# `docs/workflow.md` 是新的:10 張 Mermaid 圖畫**序列**,而 SVG 畫**常態形狀**,
-# 兩張圖對同一份普查在兩個方向上對帳(§2.M / T-M1..T-M8)。
+# `memory/erase.py` 的 `RETAINED` 把後果寫在明處(「nothing enforces that an audit
+# record omits user text」),而 `safety/guard.audit_record` 的 docstring 斷言了**相反的
+# 前提** —— 說覆蓋 `events` 的級聯刪除也覆蓋這條串流。它不覆蓋:
+# `REWRITABLE["audit"] is False`,而 `RETAINED` 列著 `audit.jsonl`。
+# 而這個矛盾已經被寫成綠色的測試:舊的 test_the_audit_stream_shares_the_one_writer
+# 用 `audit_record(..., utterance="來揮手")` 造紀錄,並斷言它落進 audit.jsonl 且讀得回來
+# —— 使用者說的話,落在唯一一條刪除到不了的串流裡。缺陷是活的,不是潛在的。
 #
-# 這份清單由**與 base tree 對帳**產生,不是憑記憶列的:把工作樹每個檔案的
-# `git hash-object` 跟 main 的 tree(136 個 blob,truncated=false)比一次,
-# 得到 4 個變更 + 11 個新增;扣掉刻意排除的那 4 個之後是 11 行,
-# 再加上推送機制自己的兩行,總共 13 個 blob。
+# 這份清單由**與 base tree 對帳**產生,不是憑記憶列的:base 是 PR #26 的 head
+# 8d7eb6fe2939(tree f1337c8cb8ec,144 個 blob,truncated=false),把工作樹每個檔案的
+# `git hash-object` 跟它比一次,得到 10 個變更 + 6 個新增;扣掉刻意排除的 5 個之後
+# 是 11 行,再加上推送機制自己的兩行,總共 13 個 blob。
 #
-# 對出來的差集裡有四個檔案刻意不在清單上:daemon/miniaudio.h 與
-# daemon/oar-daemon 是廠商標頭與建置產物,infra/local.env 與 infra/ssh_config
-# 帶帳號專屬值且 git-ignored。.push/message.txt 是這次推送的訊息本體。
+# 這是**疊在 #26 上面**的分支,不是從 main 開的:#26 已經動了
+# docs/test-design.md 與兩份 README,而這一輪必須再動同樣三個檔案(數字變成
+# 1474 / 284 / 35),從 main 開會讓兩個 PR 在同樣的行上打架。
 #
-# 對帳同時比了模式:四個變更檔在 base tree 與磁碟上都是 100644,
-# 十一個新增檔在磁碟上都是 100644,沒有 --allow-mode-change。
-# 寫錯模式會在每一項檢查全綠的情況下剝掉執行位元 —— 那是 S3 那次現場抓到的。
+# 對出來的差集裡有五個檔案刻意不在清單上:daemon/miniaudio.h 與 daemon/oar-daemon
+# 是廠商標頭與建置產物,infra/local.env 與 infra/ssh_config 帶帳號專屬值且 git-ignored,
+# .push/message.txt 是這次推送的訊息本體。
+#
+# 對帳同時比了模式:十個變更檔在 base tree 與磁碟上都是 100644,新增的那一個在磁碟上
+# 也是 100644,沒有 --allow-mode-change。
 
-# 普查本身:讀啟動器而不是讀清單。`edges_in()` 對解不開的 topic 參數**拋錯**,
-# 因為一個安靜跳過的邊會讓圖少畫一條線而所有檢查全綠。
-100644 infra/ros_census.py
+# 執行的位置就是論證。檢查放在**唯一的寫入者** `Store.append`,不放在創造者:
+# `audit_record(**fields)` 的呼叫者可以轉發 `**user_supplied`,那對任何讀原始碼的普查
+# 都是不透明的,所以創造者裡的檢查只是給那一個用了它的呼叫者的建議。這條原則是
+# store.py:186-188 自己寫下的。四個 kind 各自宣告欄位,**沒有預設值** —— 一個新 kind
+# 在有人寫下它可以攜帶什麼之前會被拒絕,因為 audit.jsonl 不可抹除,事後選的欄位集合
+# 套不回已經在磁碟上的東西。`chat` 那一列是在**它的呼叫者接上之前**就宣告的,而那正是
+# 理由:欄位集合只有一次是免費強制的,就在第一個寫入者存在之前。
+100644 memory/store.py
 
-# 缺口清單:7 行,類別是封閉集 {external, pending, defect, unused},
-# 而且**兩個方向**都查 —— 真的斷頭卻沒有行要紅,已經接好卻留著行也要紅。
-# `/game/rps_round` 與 `/memory/rps_table` 是一個缺口的兩端,只接一端會看起來像進度。
-100644 infra/graph_gaps.tsv
+# docstring 換掉,而且開頭就說前一版說了反話。共用單寫者讓**次序**安全,
+# 跟可抹除性無關。
+100644 safety/guard.py
 
-# 生成器:寬度、框、線段全部算出來,並在寫檔前跑 `geometry_findings`。
-# 退出碼 0 寫了 / 1 有幾何 finding / 3 普查跑不起來 —— 一個跑不起來的守衛
-# 不可以回報乾淨。動畫用 CSS `offset-path`,而 `@keyframes` **不在** `@supports`
-# 裡面:巢進去會解析、會列在 cssRules 裡、animation-name 也算得出來,但不會動。
-100644 infra/arch_render.py
+# `RETAINED` 的文字進每一張刪除收據,所以它是介面:它原本承諾這個洞是開的,
+# 而一張在 schema 落地之後還在那樣寫的收據,是低報了刪除真正做到的事 ——
+# 跟高報是同一類缺陷,兩者都是一張不描述系統的收據。
+100644 memory/erase.py
 
-# 生成出來的圖,連同它的證據:render 記錄裡的像素是**引用**而不是重新量測,
-# 因為離線套件裡沒有瀏覽器也沒有 node。第一版草稿的寬度留在記錄裡當對照
-# ——那 7 個區塊全部解析成功、全部繪出、0 個 error,而且不能讀。
-100644 docs/architecture.svg
-100644 docs/workflow.md
-100644 docs/evidence/mermaid-render.json
+# 28 個案例。正控由**真的生產者**驅動而不是手寫 dict;普查逐一走訪呼叫點,並把
+# **讀不到的呼叫點寫成資料**(OPAQUE_SITES / BUILDER_ONLY / NOT_PRODUCERS),每一筆
+# 都要具名替它覆蓋的那個測試,而那個測試必須真的存在。三個呼叫點裡只有一個傳的是
+# AST 讀得懂的字面值 —— 這個弱點是量出來的,不是猜的。
+# L3 選到 5 個:4 個具名突變體 + 無突變對照。其中 audit_check_moved_after_seq
+# 證明「有沒有 raise」不是正確的量:紀錄仍然被拒,但序號變成 1, 3。
+100644 tests/test_audit_schema.py
 
-# 推送之後在 Chromium 151 上量的那一趟。它的結論是正面的(點真的在路徑上移動),
-# 但它最有價值的兩行是負面的:`CSS.supports('offset-path','path("")')` 在 Chrome 151
-# 是 **false**,所以每份特徵偵測範例的寫法會在一個完全支援的瀏覽器上把閘關上;
-# 而自動化環境的時間軸凍在 0,兩張相隔 2.5 秒的截圖位元相同 —— 那量的是 harness。
-# T-M9 斷言這份記錄引用的閘字串真的出現在出貨的那個 SVG 裡。
-100644 docs/evidence/architecture-animation.json
+# 舊測試反轉:次序主張留著,原文拿掉,而「創造者仍然願意造、寫入者才是拒絕的地方」
+# 變成同一個測試裡的斷言 —— 因為那裡正是有人會把欄位加回去的檔案。
+100644 tests/test_guard.py
 
-# 43 個案例,每一項都跑兩個方向;L3 選到 22 個:19 個具名突變體 + 3 個對照
-# (文件 / SVG / 缺口清單各一,因為它們打的是三個不同的檢查族)。
-100644 tests/test_architecture.py
+# T-A1 付的代價最大也最值得看:它需要 > 8 KB 的紀錄來逼出部分寫入,而 8300 字元的
+# audit 字串已經不是生產環境到得了的狀態,所以 audit 那一半換成 tombstone 的
+# `removed` 清單(2000 個序號,11008 bytes)—— 那才是這條串流合法地大的形狀。
+# key-sorting 那一案也付了代價:它原本刻意用 {"zebra","alpha"},**正因為** audit
+# 當時沒有 schema;現在同一句字面值同時斷言了 AUDIT_FIELDS["profile_loaded"]。
+100644 tests/test_store.py
 
-# 新的 entrypoint 要嘛有人啟動,要嘛有一行可審查的宣告。
-# 這一行讓 infra/check_deploy.sh 從 55 checks / 1 finding 回到 56 checks / 0 findings。
-100644 infra/standalone_entrypoints.tsv
+# `if unknown:` 這個突變錨點被我新加的檢查撞成不唯一,harness 因此拒絕建突變體 ——
+# 閘擋住了我自己。變數改名成 `undeclared`(也更準確),錨點回到唯一。
+100644 tests/test_why.py
 
-# §2.M 與 §0 的數字:1445 個案例、279 個突變體、34 個模組。
-# 這三個數字沒有一個是手數的,`infra/doc_counts.py` 逐一對帳。
+# 讀寫兩側:TOMBSTONE_FIELDS 是讀側,check_audit 是寫側,而真的 er.delete 造出來的
+# 那筆紀錄要通過兩邊。斷言放在這裡而不是複製到新檔案,因為只有這裡的 fixture 夠豐富
+# 到滿足 delete 的前置條件,而第二份 fixture 是第二個會漂移的讀者。
+100644 tests/test_erase.py
+
+# §2.C 的 T-C7 一列 + 六段設計說明,以及 §0 的數字:1474 個案例、284 個突變體、
+# 35 個模組。這三個數字沒有一個是手數的,`infra/doc_counts.py` 逐一對帳到 0 findings。
 100644 docs/test-design.md
 
-# 兩份 README 同一個 PR 同步,而且兩邊都寫出 `offset-path` 的瀏覽器條件
-# (Chrome、Safari 16+、Firefox 122+):較舊的 renderer 會退化成同一張圖但封包不動。
+# 兩份 README 同一個 PR 同步:1474 / 284。
 100644 README.md
 100644 README.zh-TW.md
 

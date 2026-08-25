@@ -297,9 +297,10 @@ def test_an_audit_record_needs_no_reason_but_a_bad_one_is_still_refused(tmp_path
     the exempt stream is where the vocabulary acquires its first extra member.
     """
     with make_store(tmp_path) as store:
-        store.append("audit", {"action": "gesture_refused"})
+        store.append("audit", {"kind": "audit", "action": "gesture_refused"})
         with pytest.raises(st.StoreError, match="unknown why.goal"):
-            store.append("audit", {"action": "x", "why": {"goal": "聊天"}})
+            store.append("audit", {"kind": "audit", "action": "x",
+                                   "why": {"goal": "聊天"}})
         store.flush()
         assert len(store.read("audit")) == 1
 

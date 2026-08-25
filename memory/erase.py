@@ -58,11 +58,14 @@ a new file written by a future node forces a decision instead of inheriting one.
 **What an erasure does not cover, stated instead of implied.**
 `RETAINED` is a written decision per artifact, and every receipt carries it. The audit
 stream is retained because an audit log the deletion path can shorten is not an audit
-log. The cost is real and is not talked around: nothing today stops an audit record
-from quoting user text, so the erasure cannot claim the store holds no trace of E. The
-missing piece is a content schema on `audit` records, which is a separate change with
-its own mutant, and until it lands `Receipt.retained` says so on every deletion rather
-than the absence being mistaken for completeness.
+log. That used to leave a hole this docstring described rather than fixed: nothing
+stopped an audit record from quoting user text, so an erasure could not claim the store
+holds no trace of E. `memory.store.AUDIT_FIELDS` closes it — the one writer now refuses
+any audit record carrying a field its kind has not declared, and no declared field is
+free text. So the two statements a receipt makes are now separately true: the audit log
+survives the deletion, *and* what survives is a record of decisions rather than a copy
+of what was said. The retained bytes are still about a person, so they remain inside the
+retention period; what changed is that "retained" no longer means "possibly quoted".
 """
 from __future__ import annotations
 
@@ -149,10 +152,11 @@ ATTRIBUTION_ARTIFACT = recall.EPISODES_ARTIFACT
 RETAINED = {
     "audit.jsonl":
         "the audit log is append-only for the deletion path too: a log the deletion "
-        "can shorten cannot hold the record that a deletion happened. Consequence, "
-        "not yet closed — nothing enforces that an audit record omits user text, so "
-        "an erasure cannot claim the store retains no trace of the episode. The fix "
-        "is a content schema on audit records; until then every receipt says this.",
+        "can shorten cannot hold the record that a deletion happened. What it keeps "
+        "is bounded rather than unlimited: memory.store.AUDIT_FIELDS declares, per "
+        "kind, every field an audit record may carry, the writer refuses the rest, "
+        "and none of the declared fields is free text — so the retained record says "
+        "which decisions were taken about this episode, not what was said in it.",
 }
 
 # ------------------------------------------------------------------- retention
