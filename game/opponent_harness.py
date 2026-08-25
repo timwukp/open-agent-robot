@@ -7,6 +7,7 @@ so a case is reproducible from `(case, seed, arm)` alone.
 Run it directly to write the evidence JSON that docs/test-design.md cites:
 
     python3 game/opponent_harness.py            # -> docs/evidence/track-b/opponent-h2.json
+    python3 game/opponent_harness.py --arm-cost # -> docs/evidence/track-b/arm-cost.json
 
 `tests/test_opponent.py` imports `run_matrix()` and asserts the pass criteria on
 the numbers, so the JSON is the record and pytest is the gate — a number typed
@@ -27,6 +28,7 @@ import json
 import math
 import random
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -265,7 +267,65 @@ def run_matrix(seeds: int = SEEDS, rounds: int = ROUNDS) -> dict:
     return out
 
 
+# ------------------------------------------------------------------ T-H6 (M)
+def measure_arm_cost(rounds: int = ROUNDS, samples: int = 2000,
+                     seed: int = 0) -> dict:
+    """How long one `choose()` takes, on a table warmed by `rounds` real rounds.
+
+    This is the M-level half of T-H6 and it is **not** an assertion. The gate is
+    the structural one in tests/test_game_wiring.py (the beat path cannot reach the
+    model); this number only says whether the arm-time call is anywhere near the
+    20 ms tick period, and no test may go red because a laptop was busy — a timing
+    assertion earns itself a `skip` within two days (§6.0 rule 4, and the house
+    rule that no test in this suite asserts a duration).
+
+    Written to its own JSON rather than into opponent-h2.json on purpose:
+    opponent-h2.json is bit-reproducible from its seeds, and mixing a wall-clock
+    measurement into it would destroy that property.
+    """
+    # The table is warmed against the exploitable opponent rather than a coin: an
+    # empty table would make `choose()` return on its first branch and time the
+    # fallback instead of the arithmetic we are asking about.
+    rng = random.Random(seed)
+    model = Opponent(rng=random.Random(seed))
+    hist: list[dict] = []
+    for _ in range(rounds):
+        robot = model.choose()
+        user = opp_win_stay_lose_shift(rng, hist)
+        model.observe(user, robot)
+        hist.append({"user": user, "robot": robot,
+                     "user_outcome": outcome_for_user(user, robot)})
+    contexts = sum(len(t) for t in model.tables.values())
+    per_call: list[float] = []
+    for _ in range(samples):
+        t0 = time.perf_counter()
+        model.choose()
+        per_call.append((time.perf_counter() - t0) * 1e3)
+    per_call.sort()
+
+    def pct(p: float) -> float:
+        # nearest-rank on a sorted list; n is reported so p95 can be read with the
+        # scepticism it deserves (§6.0 rule 4: n < 20 makes a p95 into a max).
+        return per_call[min(len(per_call) - 1, int(math.ceil(p * len(per_call))) - 1)]
+
+    return {"samples": samples, "warmup_rounds": rounds, "seed": seed,
+            "contexts": contexts, "gate_open": model.gate_open(),
+            "tick_period_ms": 20.0, "unit": "ms",
+            "p50": pct(0.50), "p95": pct(0.95), "max": per_call[-1]}
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--arm-cost"]:
+        result = measure_arm_cost()
+        EVIDENCE.mkdir(parents=True, exist_ok=True)
+        path = EVIDENCE / "arm-cost.json"
+        path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        print(f"choose() over {result['contexts']} contexts: "
+              f"p50 {result['p50']:.4f} ms  p95 {result['p95']:.4f} ms  "
+              f"max {result['max']:.4f} ms  (n={result['samples']}, "
+              f"tick period {result['tick_period_ms']:.0f} ms)")
+        print(f"wrote {path}")
+        return 0
     result = run_matrix()
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     path = EVIDENCE / "opponent-h2.json"

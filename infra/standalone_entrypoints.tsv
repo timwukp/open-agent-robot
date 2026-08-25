@@ -15,5 +15,5 @@
 body/gestures.py	library imported by body_node; its __main__ is a --list-joints dev utility
 infra/day0_measure.py	one-off day-0 measurement script, run by hand on the instance
 skills/measure_l1_tokens.py	one-off T-I1 token measurement against Bedrock, run by hand; its result is pasted into tests/test_skills_loader.py
-game/opponent_harness.py	offline T-H2..H4 evaluation of game/opponent.py, run by hand; writes docs/evidence/track-b/opponent-h2.json which tests/test_opponent.py asserts against
+game/opponent_harness.py	offline T-H2..H4 evaluation of game/opponent.py, run by hand; writes docs/evidence/track-b/opponent-h2.json which tests/test_opponent.py asserts against, plus arm-cost.json under --arm-cost (T-H6, reported never asserted)
 infra/redact_scan.py	redaction scan over an explicit push file list, run by hand before every Git Data API push; three exit codes (0/1/3) and tested by tests/test_redact_scan.py

@@ -49,10 +49,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GAME_DIR = REPO_ROOT / "game"
 OPPONENT_PY = GAME_DIR / "opponent.py"
 HARNESS_PY = GAME_DIR / "opponent_harness.py"
+RPS_PY = GAME_DIR / "rps.py"
 EVIDENCE_JSON = REPO_ROOT / "docs" / "evidence" / "track-b" / "opponent-h2.json"
 
 from game import opponent as opp  # noqa: E402
 from game import opponent_harness as harness  # noqa: E402
+from game import rps  # noqa: E402
 
 # The evidence run. Kept as constants so a drifted JSON is a red test rather than
 # a quietly different claim; §6.0 rule 6 (numbers by harness, cited from JSON).
@@ -123,7 +125,7 @@ def _tree(path: Path) -> ast.Module:
     return ast.parse(path.read_text(), filename=str(path))
 
 
-@pytest.mark.parametrize("path", [OPPONENT_PY, HARNESS_PY], ids=lambda p: p.name)
+@pytest.mark.parametrize("path", [OPPONENT_PY, HARNESS_PY, RPS_PY], ids=lambda p: p.name)
 def test_pure_module_imports_nothing_that_needs_the_robot(path: Path) -> None:
     """§6.1: a module that imports rclpy or boto3 can only be tested on the GPU
     instance, which means it will not be tested. Mutant: `import boto3` at the top
@@ -156,21 +158,39 @@ def test_the_module_never_reaches_for_the_global_random_source() -> None:
     assert not offenders, "module-level randomness: " + ", ".join(offenders)
 
 
-def test_the_scoring_table_agrees_with_the_reflex_node() -> None:
-    """Two files decide who won: `game_node.WINS` announces it to the user and
-    `opponent.BEATS` learns from it. If they ever disagree the model trains on the
-    opposite of what the robot said out loud, and no test of either file alone can
-    see it. Derived from game_node's source, never restated here.
+def test_the_scoring_table_has_exactly_one_creator() -> None:
+    """Who decides who won: one table, and `BEATS` is it.
 
-    Mutant: flip one pair in opponent.BEATS → red.
+    This test used to compare `game_node.WINS` against `opponent.BEATS`, because two
+    files each held their own 3x3 relation and nothing forced them to agree — if
+    they ever disagreed the robot would announce one result and train on the
+    opposite, and no test of either file alone could see it. Wiring the model into
+    the game made that unacceptable rather than untidy, so `WINS` is gone and both
+    views now come out of `game/rps.judge`, which derives them from `BEATS`.
+
+    So the assertion changed shape with the code: instead of checking that two
+    copies agree, it checks that the second copy does not exist and that the
+    remaining creator is the one being used. The reintroduction mutant lives in
+    tests/test_game_wiring.py::test_mutant_second_outcome_table_reintroduced.
     """
-    wins = None
-    for node in ast.walk(_tree(GAME_DIR / "game_node.py")):
-        if isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == "WINS" for t in node.targets):
-            wins = ast.literal_eval(node.value)
-    assert wins, "game_node.WINS not found — the invariant has no creator to check"
-    assert {(w, l) for w, l in wins} == {(w, l) for w, l in opp.BEATS.items()}
+    node_tree = _tree(GAME_DIR / "game_node.py")
+    duplicates = []
+    for stmt in node_tree.body:
+        if not isinstance(stmt, ast.Assign) or not isinstance(
+                stmt.value, (ast.Dict, ast.Set, ast.Tuple, ast.List)):
+            continue
+        strings = {n.value for n in ast.walk(stmt.value)
+                   if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+        if strings and strings <= set(opp.MOVES):
+            duplicates.append(getattr(stmt.targets[0], "id", "<unnamed>"))
+    assert not duplicates, (
+        f"game_node holds its own move relation again ({duplicates}); the outcome "
+        "the person hears and the label the model learns must come from one table")
+    assert any(isinstance(n, ast.Attribute) and n.attr == "judge"
+               and isinstance(n.value, ast.Name) and n.value.id == "rps"
+               for n in ast.walk(node_tree)), \
+        "game_node no longer calls rps.judge, so the surviving table has no user " \
+        "and the outcome is being decided somewhere this test cannot see"
 
 
 def test_the_harness_is_a_declared_standalone_entrypoint() -> None:
@@ -650,19 +670,29 @@ def test_mutant_stale_evidence_is_caught_by_the_recomputation_check(
 
 
 @pytest.mark.mutation
-def test_mutant_flipped_scoring_table_diverges_from_the_reflex_node(
-        tmp_path: Path) -> None:
-    """Kills: test_the_scoring_table_agrees_with_the_reflex_node."""
+def test_mutant_flipped_beats_moves_the_judgement_too(tmp_path: Path) -> None:
+    """Kills: test_the_scoring_table_has_exactly_one_creator (the second half).
+
+    The old mutant flipped `BEATS` and looked for divergence from `game_node.WINS`.
+    With one table there is nothing left to diverge *from* — which is the whole
+    point of collapsing them, and also means that mutant can no longer fail. What
+    can still fail is delegation: if `game/rps.py` had quietly grown its own copy of
+    the relation, flipping `BEATS` here would leave `rps.judge` unmoved.
+
+    So the assertion is that the flip *does* move the judgement. `rps` imports the
+    real module, so the comparison is mutant-vs-shipped rather than in-place.
+    """
     mod = load_mutant(
         tmp_path,
         ('BEATS = {"rock": "scissors", "scissors": "paper", "paper": "rock"}',
          'BEATS = {"rock": "paper", "paper": "scissors", "scissors": "rock"}'))
-    wins = None
-    for node in ast.walk(_tree(GAME_DIR / "game_node.py")):
-        if isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == "WINS" for t in node.targets):
-            wins = ast.literal_eval(node.value)
-    assert {(w, l) for w, l in wins} != {(w, l) for w, l in mod.BEATS.items()}
+    disagreements = [
+        (u, r) for u in opp.MOVES for r in opp.MOVES
+        if mod.outcome_for_user(u, r) != rps.judge(u, r)[0]]
+    assert len(disagreements) == 6, (
+        f"flipping BEATS changed {len(disagreements)} of the 9 pairs; the three "
+        "ties are invariant under the flip and the other six must all move, or "
+        "rps.judge is not reading opponent.BEATS")
 
 
 def test_the_statistics_helper_refuses_to_average_nothing() -> None:
