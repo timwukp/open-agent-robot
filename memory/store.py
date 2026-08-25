@@ -20,6 +20,18 @@ exists to hold would be broken by the first feature that depends on it. So the
 streams are a closed enum and the writer is one thread. What S4 adds is episodes,
 not a second way to write.
 
+**Why `why.goal` becomes mandatory in this stage and not in the one that needs it.**
+S5 is the stage that reads the goal, so the tempting order is to add the field when
+something consumes it. But a field is mandatory for free exactly once: before the
+first writer exists. Today `memory_node` appends to `audit` only, so making a reason
+compulsory on `events` changes no production call site at all — it changes twelve
+lines of test suite. Adding the same requirement after S5 ships would instead be a
+migration over a file of personal data that cannot be re-derived, and the pressure
+in that moment is to make the field optional "for the old records", which is the
+version where the boundary never existed. Plan §S4.5 put this stage here; what was
+measurable is that the cost of putting it here is zero and the cost of putting it
+one stage later is unbounded.
+
 **What durability means here, precisely.**
 `flush()` guarantees the record has been handed to the kernel *and* fsynced, so
 another process can read it and a power loss will not lose it. The test suite can
@@ -55,6 +67,70 @@ class ReadOnlyError(StoreError):
 # name would let a caller invent a file nothing knows how to retain or delete, and
 # everything written here is personal data with a retention period attached.
 STREAMS = ("events", "audit")
+
+# --------------------------------------------------------- why.goal (plan §S4.5)
+#
+# The closed enumeration three comments in this tree already cite as the example of
+# one — the `STREAMS` comment directly above, `memory/segment.py`'s `KINDS`,
+# `safety/guard.py`'s enums — and which design item T-C1 lists a free-text `goal`
+# in the rejection set for. Until this tuple existed, the invariant those comments
+# assert had no creator anywhere in the repo.
+#
+# **Why the plan's own notation had to be expanded before it could be enforced.**
+# §S4.5 writes the families as `user_requested_*` / `game_*` / `vision_event` /
+# `scheduled_*`, and a `*` is not a closed set. Implemented as a prefix test,
+# `user_requested_ignore_stop_words` is accepted and the field becomes exactly the
+# hole it was added to close — the free text returns as the suffix. A prefix is the
+# right shape for a *scanner*, where failing to notice a new name is the failure
+# mode; it is the wrong shape for a *gate*, where admitting one is. Same pattern,
+# opposite direction, because the failure lands on the other side of the test.
+#
+# So the families are documentation and the members are the contract, and the gate
+# below contains no prefix test at all — not even to build a friendlier error
+# message. A mutant therefore has to *add* code rather than change it. Note that the
+# claim is about `check_why` and is asserted by walking that function's AST, not by
+# grepping this file: `write_snapshot` uses `startswith` legitimately on a file name,
+# so a file-level grep would need an allowlist, and an allowlist that can be taught
+# one exception can be taught the second one quietly.
+# `tests/test_why.py` derives the four family names back out of the members, so a
+# family that loses its last member reds instead of quietly ceasing to exist.
+#
+# **Why it is nested under `why` rather than a flat `goal` field.**
+# `memory/profile.py` already has a `goal` *predicate*, and its value is a sentence
+# the person said out loud (`memory/profile.example.json`: 練粵語聽力). A flat field
+# would give a user-authored string and a closed enum the same key in two files that
+# S5 joins, and the first join would mix them with nothing anywhere to notice. That
+# collision is asserted disjoint in the tests rather than avoided by naming
+# discipline — 練粵語聽力 is a row in the frozen rejection set.
+GOALS = (
+    # user_requested_* — the person asked for this, in words.
+    "user_requested_answer",     # an ordinary turn they opened
+    "user_requested_remember",   # 「記住這件事」
+    "user_requested_forget",     # 「忘記我說的 X」 — the deletion transaction
+    "user_requested_recall",     # 「我上次說什麼」
+    "user_requested_stop",       # the L0 stop reflex fired on their word
+    # game_* — the round loop, the one place a reward is measured by a sensor.
+    "game_start",
+    "game_round",
+    "game_stop",
+    # vision_event — a detector fired with nobody speaking.
+    "vision_event",
+    # scheduled_* — nothing in the room caused it.
+    "scheduled_consolidation",   # S5's nightly summarise-and-embed pass
+    "scheduled_retention",       # the retention-period sweep, which deletes
+)
+
+# Which streams must carry a reason. Written out for every member of `STREAMS`
+# rather than looked up with a default, because `WHY_REQUIRED.get(stream, False)`
+# lets the *next* stream default to exempt, and the decision nobody made is then
+# indistinguishable from the decision to exempt it.
+#
+# `audit` is exempt deliberately. A guard's audit record has no reason of its own —
+# the event it is about has one. Demanding one would make callers invent a member,
+# and an invented enum value is worse than an absent field: it is indistinguishable
+# from a real one, so the enum silently acquires an "unknown" member spelled like a
+# goal, and every census and retention sweep counts it as real.
+WHY_REQUIRED = {"events": True, "audit": False}
 
 # Record fields that are meaningless without a companion field (plan §S3.5).
 #
@@ -187,6 +263,87 @@ def location_findings(path: Path) -> list[str]:
     return findings
 
 
+def check_why(why) -> str:
+    """Validate a `why` block and return its goal. Raises `StoreError` otherwise.
+
+    A function rather than a method, for the same reason `location_findings` is one:
+    the producer that is about to send a ROS message can check the reason it is
+    about to claim without holding the writer, and a test can assert on the message
+    instead of on an exit code.
+    """
+    if not isinstance(why, dict):
+        raise StoreError(f"why must be a dict, got {type(why).__name__}: "
+                         f"{why!r} — the shape is {{'goal': <one of GOALS>}}")
+    extra = sorted(k for k in why if k != "goal")
+    if extra:
+        raise StoreError(
+            f"why carries {extra} beyond 'goal': a companion key is where the free "
+            "text this enum exists to refuse comes back one level down, and it "
+            "would be recalled into a prompt as data the model reads")
+    if "goal" not in why:
+        raise StoreError("why has no 'goal': an empty reason block satisfies every "
+                         "check that only looks at what is present")
+    goal = why["goal"]
+    if not isinstance(goal, str):
+        raise StoreError(f"why.goal must be a str, got {type(goal).__name__}: "
+                         f"{goal!r}")
+    if goal not in GOALS:
+        raise StoreError(
+            f"unknown why.goal {goal!r}: the set is closed, lives in "
+            f"memory.store.GOALS ({len(GOALS)} entries), and belonging to a family "
+            f"grants nothing — the members are {GOALS}")
+    return goal
+
+
+def goal_of(record: dict) -> str:
+    """The validated goal of one record read back off disk.
+
+    Reading is exactly as strict as writing, and returning `None` for a record with
+    no reason is the version that fails silently: such a record would be absent from
+    every goal filter and every census, which is the same observation as its not
+    existing. A record in a stream that requires a reason and lacks one was not
+    written by this module — the same conclusion `read()` draws from a line that
+    does not parse, and the same reason it raises instead of skipping.
+    """
+    if "why" not in record:
+        raise StoreError(
+            "record has no 'why' — it was not written through Store.append on a "
+            f"stream that requires one: {sorted(record)[:6]}")
+    return check_why(record["why"])
+
+
+def filter_by_goal(records, goals) -> list[dict]:
+    """The records whose goal is in `goals`. Raises on an unknown goal in the query.
+
+    The refusal is the point. An unknown goal returns the same empty list as a goal
+    nothing has yet, so a typo, a rename, or a stale caller reads as "there were
+    none of those" — the reading a retention sweep or a deletion audit would act on.
+    """
+    if isinstance(goals, str):
+        raise StoreError(
+            f"pass a sequence of goals, not the string {goals!r}: a string is "
+            "iterable, so this would quietly ask for its characters and match none")
+    wanted = tuple(goals)
+    unknown = sorted({g for g in wanted if g not in GOALS})
+    if unknown:
+        raise StoreError(f"unknown goal(s) {unknown} in a query; the set is {GOALS}")
+    return [r for r in records if goal_of(r) in wanted]
+
+
+def goal_census(records) -> dict[str, int]:
+    """Records per goal — **every member present, zeros included**.
+
+    Omitting the zeros makes "nothing carried this goal" and "this goal is no longer
+    in the set" the same output, and both a renamed member and a deleted one then
+    look like a quiet day. Keys come out in `GOALS` order, so two runs of the same
+    input produce byte-identical JSON.
+    """
+    counts = {goal: 0 for goal in GOALS}
+    for record in records:
+        counts[goal_of(record)] += 1
+    return counts
+
+
 class Store:
     """The one object allowed to write. One writer thread, N append-only streams.
 
@@ -245,6 +402,23 @@ class Store:
                     f"a record carrying {field!r} must also carry {companion!r}: a "
                     f"derived value with no record of what produced it cannot be "
                     f"compared with the next one — use memory.salience.stamp()")
+        # Same placement as the field-dependency check above, and for both of its
+        # reasons: before `_raise_if_failed` so a record refused for what it contains
+        # is never reported as a broken disk, and before a sequence number is taken
+        # so a refusal leaves no gap — a gap is indistinguishable from a deletion,
+        # which is the one ambiguity an audit log exists to remove.
+        if stream not in WHY_REQUIRED:
+            raise StoreError(
+                f"stream {stream!r} is in STREAMS but not in WHY_REQUIRED: a new "
+                "stream has to decide whether a reason is mandatory, and a default "
+                "either way is the decision nobody made")
+        if "why" in record:
+            check_why(record["why"])
+        elif WHY_REQUIRED[stream]:
+            raise StoreError(
+                f"a {stream!r} record must carry why={{'goal': ...}}: an optional "
+                "reason is how the retrieval key and the safety boundary both stop "
+                f"existing while records keep flowing. The goals are {GOALS}")
         self._raise_if_failed()
         # Everything that can fail happens **before** a sequence number is taken,
         # and it costs a second `json.dumps` to arrange. Two reasons, both worth the
