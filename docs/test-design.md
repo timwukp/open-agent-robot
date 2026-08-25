@@ -6,7 +6,7 @@
 
 閱讀順序:先讀 §0(為什麼這樣分級),再跳到你要動的那個子系統。
 
-**這份文件描述的是設計,不是既成事實。** 今天真正跑起來的是 1342 個案例,落在
+**這份文件描述的是設計,不是既成事實。** 今天真正跑起來的是 1401 個案例,落在
 §2.A(持久化與單寫者,含 T-A5 唯讀種子與 T-A9 配對律)、
 §2.B 的 T-B1/T-B2/T-B4 與 T-B3 的不變量半段(確定性切分)、
 §2.C 的 T-C1 的 goal 半段(`why.goal` 封閉枚舉)、上一輪的 T-C2(N ≥ 2 個獨立 episode)與 T-C3(provenance 完整性)、
@@ -16,18 +16,18 @@
 上一輪的 §2.F 的 T-F6 的三組對照本身(三支臂 + 拒絕下結論的退出碼)、
 **這一輪的 §2.G 的離線半段**(輸出守衛的中斷協定、四級可聽度、兩個主張式的 chant 普查、凍結紅隊集的分級)、
 §2.H(猜拳對手建模)、§2.I(技能加載器)、
-§2.J(測試自身的健康度)、§2.K(Track C 在機量測)與 §1(替身本身的證明)十二處:
+§2.J(測試自身的健康度)、§2.K(Track C 在機量測)、**這一輪的 §2.L 的離線半段**(封閉工具登錄冊、六個結果狀態、egress 通道普查)與 §1(替身本身的證明)十三處:
 
 | 檔案 | 案例數 | 對應 |
 |---|---|---|
 | `tests/test_opponent.py` | 74 | T-H1..T-H5(L3 選到 7 個:6 個具名突變體 + 無突變對照) |
-| `tests/test_skills_loader.py` | 71 | T-I1、T-I2、T-I3(L3 選到 4 個具名突變體) |
+| `tests/test_skills_loader.py` | 67 | T-I1、T-I2、T-I3(L3 選到 4 個具名突變體) |
 | `tests/test_guard.py` | 74 | **T-D1 的反射半段**、**T-D2①②**、T-D3、T-D4、T-D6、T-D7、T-C5 的結構半段(L3 選到 11 個:10 個具名突變體 + 無突變對照) |
 | `tests/test_token_cost_harness.py` | 34 | T-K5、T-F5(L3 選到 8 個:7 個具名突變體 + 無突變對照) |
 | `tests/test_guardrail_latency.py` | 31 | T-K3(L3 選到 7 個:6 個具名突變體 + 無突變對照) |
 | `tests/test_disclosure.py` | 39 | **T-E1**、**T-E3 的結構半段**、`/speech/say` 的鍵普查(讀者集合由 `tts_node` 的 import 遞移導出,含一個三跳的構造案例當正控)(L3 選到 9 個:8 個具名突變體 + 無突變對照) |
 | `tests/test_voices.py` | 33 | **T-E2**(引擎普查 × 兩條時長路徑的全交叉積 + `tts_node` 的唯一創造者;L3 選到 4 個:3 個具名突變體 + 無突變對照) |
-| `tests/test_meta.py` | 44 | T-J2(在沙箱子行程裡證明收集下限)、T-J5、**T-J7** |
+| `tests/test_meta.py` | 45 | T-J2(在沙箱子行程裡證明收集下限)、T-J5、**T-J7** |
 | `tests/test_context.py` | 43 | **T-C5 的注入半段**(真 `Retriever` 召回的敵意句子只出現在柵欄內、指令區對無記憶基線逐位元相同)、**提示組裝的部署路徑**(AST:節點自己不得持有提示文字、`system_text` 唯一來源、憲法載入不得被 `try` 包住);柵欄名的封閉集與 `data_region` 的碰撞拒絕(L3 選到 8 個:7 個具名突變體 + 無突變對照) |
 | `tests/test_push_branch.py` | 44 | **§7 的推送機制本身**(三方 sha、read-back、會說謊的 API 替身,以及**檔案模式**對工作樹可執行位元與 base tree 兩邊的比對;L3 選到 5 個:4 個具名突變體 + 無突變對照) |
 | `tests/test_entrypoints.py` | 29 | **T-J1 的發現半段**(AST:`__main__` 閘 or import 期工作;L3 選到 3 個:2 個具名突變體 + 無突變對照) |
@@ -39,6 +39,7 @@
 | `tests/test_recall.py` | 108 | **T-F3 的離線半段**(期限降級 + 「檔案卡免期限」是欄位而非順序)、**T-C4 的五條路徑登錄冊**(每條路徑帶狀態,「0 命中」只跟 `ran` 一起才成立;讀取的 artifact 由磁碟導出;`SEED`/`ORPHAN` 分開;卡片事實**每個來源 episode 一筆命中**)、§0-6 的單一分詞器律、**這一輪加的 `Hit.ref` 唯一創造者普查**(四個創造者由 AST 導出當豁免與正控,任何生產檔案自己拼 ref 就紅;ref 的拼法帶三個消費者會據以行動的資訊)(L3 選到 17 個:16 個具名突變體 + 無突變對照) |
 | `tests/test_rank.py` | 60 | **T-F6 的三組對照**(衰減 / 重要性剪枝 / 只改排序;缺席資料是一層不是預設值,十一個狀態逐一斷言;`quality` 是狀態不是數字,harness 四個退出碼;臂的名冊兩邊導出;三支臂完全一致時的碰撞判定有正控也有反控)(L3 選到 10 個:9 個具名突變體 + 無突變對照) |
 | `tests/test_output_guard.py` | 73 | **§2.G 的離線半段**(T-G1 的中斷協定與四級可聽度逐級可達、T-G2 的異步結構斷言、T-G3 的兩個主張式普查、T-G4 的凍結集與三個會說謊的分類器 + exit 0 對真實凍結集不可達)(L3 選到 12 個:11 個具名突變體 + 無突變對照) |
+| `tests/test_tools.py` | 62 | **§2.L(工具邊界,S8 的離線半段)**(封閉登錄冊與由模組命名空間導出的 dispatch、六個結果狀態逐一可達且只有 `REFUSED` 能宣稱邊界動作了、20 個未宣告名字全放進 offer set 仍不可達、效果預算與讀取上限是兩個數字、egress 通道集合由 `agent_node` 的 `create_publisher` 導出;L3 選到 7 個:6 個具名突變體 + 無突變對照) |
 | `tests/test_why.py` | 77 | **T-C1 的 goal 半段**(封閉枚舉、31 條凍結拒絕集、全 11 個成員當正控;L3 選到 13 個:12 個具名突變體 + 無突變對照) |
 | `tests/test_store.py` | 48 | T-A1..T-A4、T-A6、T-A7、**T-A10**(`rewrite_stream`,T-C4 的 store 側半段:逐 seq 刪除 + in-flight 記錄不被連坐 + `audit` 不可改寫 + 重開機的序號恢復;L3 選到 15 個案例,共 18 個具名突變體 —— 14 個案例各一個,位置檢查那一案在同一個測試裡連續套四個 —— 無突變對照就在位置那一案裡) |
 | `tests/test_erase.py` | 50 | **T-C4 的刪除動作本身**(tombstone 先寫後刪、五條路徑的普查由 `rc.paths()` 導出、卡片兩個分支兩種殺法、未歸屬回合保留並回報、保留期的邊界而非門檻;L3 選到 6 個:5 個具名突變體 + 無突變對照) |
@@ -50,8 +51,8 @@
 | `tests/test_doubles.py` | 16 | §1 的替身與注入式時鐘,含「會說謊 vs 回聲」那對並列證明 |
 
 `test_meta.py` 的離線 import 掃描沒有一份模組清單:參數直接來自
-`TESTS_DIR.glob("*.py")`(`tests/test_meta.py:85`),所以今天 `tests/` 裡的 **32 個模組
-恰好對應 32 個案例**,S2.5 多出來的兩個是 `tests/test_disclosure.py` 與
+`TESTS_DIR.glob("*.py")`(`tests/test_meta.py:85`),所以今天 `tests/` 裡的 **33 個模組
+恰好對應 33 個案例**,S2.5 多出來的兩個是 `tests/test_disclosure.py` 與
 `tests/test_voices.py`,S3 多出來的一個是 `tests/test_profile.py`,S3.5 多出來的一個是
 `tests/test_salience.py`,S4 多出來的一個是 `tests/test_segment.py`,S4.5 多出來的一個是
 `tests/test_why.py`,S5 離線半段的鞏固那一邊多出來的一個是 `tests/test_consolidate.py`,
@@ -64,7 +65,8 @@ S3.5 變成 35,S4 變成 36,S4.5 變成 37,S5 的鞏固那一邊變成 38,檢索
 (`tests/test_context.py`)變成 41,排序那一邊(`tests/test_rank.py`)變成 42,而這一輪的
 S7 一次加了兩個:守衛自己的 `tests/test_output_guard.py`,以及 `tests/say_payload.py` ——
 `/speech/say` 的鍵普查從 `tests/test_disclosure.py` 與 `tests/test_guard.py` 各自一份 AST
-走訪,搬成兩邊共用的一份,所以掃描變成 44。**掃描的參數是 `*.py` 而不是 `test_*.py`**,
+走訪,搬成兩邊共用的一份,所以掃描變成 44;而這一輪的 S8 加的 `tests/test_tools.py`
+把它變成 45。**掃描的參數是 `*.py` 而不是 `test_*.py`**,
 這件事在這一輪剛好有價值:一個放在 `tests/` 裡的非測試輔助模組如果 import 了 `boto3`,
 它一樣會被這條掃描抓到。
 
@@ -77,7 +79,7 @@ S2.5 這一輪它還做了第二件事,而那件更有價值:T-E3 的瀏覽器�
 一行可審查的宣告,不是守衛裡一句「這裡不用看」的註解。
 
 上表「L3 選到 N 個」的數字全部由 `pytest -m mutation --collect-only -q` 逐檔印出
-(2026-08-24 量測,全套 250 個案例),不是手數的;T-J7 保證沒有第 251 個躲在標記外面,
+(2026-08-24 量測,全套 257 個案例),不是手數的;T-J7 保證沒有第 258 個躲在標記外面,
 而 **T-J8 保證上面每一個數字都是導出來的**——包括本段自己引用的那兩個。
 
 G 各節的**在機半段**(T-G1 的裁決→靜音 400 ms、T-G2 的首句差值 50 ms、T-G4 的真跑)、
@@ -1004,7 +1006,7 @@ L1 一改就紅,逼人重跑量測而不是讓舊數字繼續掛在那裡。
 | T-J1 | 部署路徑 | `infra/check_deploy.sh`:**執行** runner(`OAR_DRY=1`)而非解析它 | 啟動集合 == 回報集合;每條執行路徑存在或有活的 producer;每個 entrypoint 有人啟動或被明文豁免 | **已實作** |
 | T-J2 | 收集下限 | 逐模組收集數;掃檔數 | 任一模組收集 0 案例 → **非零退出**;`-k`/`-m` 時自動讓位 | **已實作** |
 | T-J3 | fixture 完整性 | 大小下限 + 行數下限 + sha256,登記在 `tests/fixtures.tsv` | 截斷、等長改寫、未登記的新檔,三者都紅 | **已實作** |
-| T-J4 | 突變 harness | 逐條套用具名突變體 + 無突變對照 | 每個突變體被**它該殺的那個檢查**殺掉;對照必須綠 | **已實作**;`pytest -m mutation` 在 2026-08-24 選到 **250 個案例**,分佈見檔首表格 |
+| T-J4 | 突變 harness | 逐條套用具名突變體 + 無突變對照 | 每個突變體被**它該殺的那個檢查**殺掉;對照必須綠 | **已實作**;`pytest -m mutation` 在 2026-08-24 選到 **257 個案例**,分佈見檔首表格 |
 | T-J5 | C daemon 陳舊 | 原始碼 mtime vs 執行檔 mtime;執行中行程的啟動時間 vs 執行檔 mtime | 執行檔不得舊於原始碼;執行中的行程不得舊於磁碟上的執行檔 | **已實作** |
 | T-J6 | 推送前脫敏 | `infra/redact_scan.py` 掃**即將成為 blob 的那份檔案清單**;8 個模式類各一個具名突變體 | 每個模式類被自己那條斷言抓到(比對**類名**而非只比 rc);無突變對照必須乾淨;清單缺失/為空/列到不存在的路徑 → **exit 3** | **已實作** |
 | T-J7 | **每個具名突變體都真的在 L3 裡** | 由 AST **推導**「突變體施加器」(改寫原始碼文字 `.replace` **且**把結果變回程式 `importlib`/`ast.parse`/`compile`),再要求呼叫它的測試帶 `mutation` marker | 0 個未標記;施加器所在模組數 ≥ 4 且突變測試數 ≥ 25(掃到太少視為偵測器瞎了,不是合規) | **實作時新增**(見下方) |
@@ -1186,6 +1188,81 @@ S7 的整個非同步設計、§0-8 的延遲主張、S5 的 150 ms 期限,
 而目前的安全群組不含這台筆電的出口 IP。開一條 `/32` 是**權限放寬**,
 必須由人授權;SSM 沒有退路(instance profile 有,agent 沒註冊)。
 **這三條不是「跳過」,是「被擋住」,狀態欄寫「未做」而不是留白就是為了不讓它們消失。**
+
+---
+
+### L. 工具邊界(S8 的離線半段)
+
+計劃書的 S8 那一列在測試欄寫的是「之後再設計」,所以這一節是新設計而不是照抄。
+設計它的第一件事是讀今天的代碼,而讀完得到五個**已驗證的缺陷**——不是想像的風險:
+
+| # | 今天的事實 | 為什麼 MCP 之後會變成缺陷 |
+|---|---|---|
+| 1 | 「模型能碰到哪些工具」由 `skills/loader.py` 的一個 dict 回答 | MCP 之後由**另一台機器在執行期**回答,離線套件於是**結構上失去**斷言這個邊界的能力 |
+| 2 | `toolConfig` **只在技能命中的回合**掛上(`agent_node.py:213`) | 常駐工具目錄把它變成**每一回合都付**的輸入成本,而 T-I1 的每技能 150 token 預算沒有對應的工具規格版本 |
+| 3 | `MAX_TOOL_HOPS = 3` | 它界的是**讀取次數**;三次讀檔是三次讀檔,三次遠端工具可能是三個動作,其中兩個收不回來 |
+| 4 | `run_tool` 對所有失敗回同一個 `(f"unknown tool {name!r}", False)` | MCP 之後「模型編了個名字」/「伺服器不再提供」/「連不上」/「政策拒絕」印出同一行,於是**網路故障會被記成「邊界守住了」** |
+| 5 | `safety/output_guard.py`(整個 S7)在 `tests/` 之外**零呼叫者** | 語音是四個 topic 加一個工具通道裡**唯一**被討論過的那條,而 MCP 再加一條沒有執行者的 |
+
+第 1 與第 4 是承重的兩條。它們決定了這一節的形狀:一個**封閉的、宣告式的**工具登錄冊
+(`agent/tools.py`),外加一份**從 `agent_node` 自己的 `create_publisher` 導出**的 egress 通道普查。
+**MCP 客戶端本身、Client Credentials 憑證流、Strands 殼全部是在機半段**,要網路與一台伺服器。
+
+| ID | 測試項 | 方法 | 通過標準 | 突變體 | 狀態 |
+|---|---|---|---|---|---|
+| T-L1 | 登錄冊是封閉的,而閘的兩邊都是導出的 | `set(REGISTRY) == set(executors())`,兩邊都由模組命名空間導出(執行體叫 `_exec_<名字>`);`ToolSpec` 對 origin/effect/server 三者的矛盾組合拋錯;`tool_config()` 是 Converse 規格的**唯一創造者**,由 AST 普查其餘生產檔案沒有第二個 `toolSpec`/`inputSchema` 字面;**提示裡出現的工具名必須是登錄過的**,候選名由組好的提示用 snake_case 形狀**抓出來**而不是列出來 (D) | 四項全過;登錄冊今天**恰好等於** `{read_skill_file}`(精確集合相等,不是子集) | 在 tmp 副本裡加一個 `_exec_launch_missiles` 而不宣告 → 導出的等式必須破(這一條同時是**寫死 dispatch dict 會通過**的那個斷言的正控) | ✅ |
+| T-L2 | 六個結果狀態,而**只有一個**能宣稱邊界動作了 | `OUTCOMES` 六個互異;`BOUNDARY_ACTED == (REFUSED,)`;**六個逐一證明可達**(參數化,每個由一次真的 `invoke` 產生) (D+A) | 六個都可達;`UNREACHABLE`/`ERRORED`/`NOT_OFFERED`/`UNKNOWN_TOOL` 的 `boundary_acted` 皆為假 | 把判準寫成 `outcome != OK` → 一次網路分區期間跑的紅隊報告與政策真的生效的那次印出同一行乾淨結論 → 紅 | ✅ |
+| T-L3 | 探索只能**縮小**登錄冊,永不放大 | 20 個未宣告名字的 fuzz,含尾隨空白、大小寫、西里爾同形字 `е`、`mcp__wx__` 前綴、`../` —— **每一個都放進 `offered`**;`offered=None` 與 `offered=set()` 產生不同的 findings (D+A) | 20/20 回 `UNKNOWN_TOOL` 且 `effect is None`;未解析的名字不得被指派 effect 類別 | 把 offer set 併進登錄冊(這是遇到「合法伺服器工具被拒」時最順手的修法)→ 工具面變成別人 repo 的性質 → 紅 | ✅ |
+| T-L4 | 效果預算界的是副作用,不是讀取 | `MAX_EFFECT_HOPS == 0`,`MUTATES` 工具在 hop 0 就被拒;`READ_ONLY` 工具在 `effect_hops_used=99` 仍然 `OK`;**兩個上限各一條斷言** (D) | 三項全過;`loader` 不得再持有 `MAX_TOOL_HOPS` | `>=` 改成 `>` —— 「超出預算」最自然的寫法,而預算是 0 時它恰好放過**第一個**不可逆動作 → 紅 | ✅ |
+| T-L5 | egress 通道普查:每條通道指名自己的執行者 | 通道集合的 ROS 那半**由 `agent/agent_node.py` 的 `create_publisher` AST 導出**並與表精確相等;每個指名的執行者必須是**存在的**檔案且含該屬性;`NOT_WIRED` 這一格由**呼叫者普查**證實(生產檔案減去 `infra/standalone_entrypoints.tsv` 宣告的手跑腳本);`reachability_findings()` 檢查宣告的 `model_reachable` 與 `REGISTRY` 導出的是否一致 (D) | 通道集合兩邊相等;未守衛且模型可達的集合**精確等於** `{/speech/say}`;`reachability_findings() == []` | 把 `/speech/say` 那一格從 `NOT_WIRED` 改成 `ENFORCED`(一個字)→ 呼叫者普查紅;把 `/game/cmd` 那一列從表裡拿掉 → 發佈器導出紅 | ✅ |
+
+**修正 1(第 1 條缺陷的處理方式,設計上的關鍵決定):**
+「MCP 之後工具面不再由 repo 導出」的順手修法是**信任探索**——把伺服器提供的工具併進目錄。
+這一節反過來做:`reconcile()` 把「伺服器提供、repo 沒宣告」當成 **finding**,`invoke` 對它回
+`UNKNOWN_TOOL`,而 `offered` 是一個**只能縮小**的輸入。代價講明:一個合法的新伺服器工具需要
+改一次 `agent/tools.py` 才能用,也就是需要一次 review。這是刻意選的代價,不是遺漏。
+
+**修正 2(第 4 條缺陷:一個狀態變成六個,而不是兩個或五個):**
+`REFUSED` 是關於**政策**的主張,`UNREACHABLE` 是關於**網路**的主張,`ERRORED` 是關於**我們自己**的
+主張(宣告了工具卻沒有執行體),`NOT_OFFERED` 是關於**伺服器漂移**的主張,`UNKNOWN_TOOL` 是關於
+**模型**的主張。Converse 的 `toolResult.status` 只有兩個值,所以 `agent_node` 仍然只送
+success/error——但**結果狀態進日誌**,因為「政策拒絕」與「連不上」事後不能長得一樣。
+這與 T-C4 的 `ran` 旗標、S7 的 `errored ≠ allowed` 是同一族。
+
+**修正 3(第 5 條缺陷:兩種「沒有執行者」要分開):**
+`NOT_WIRED`(執行者在 repo 裡而沒有呼叫者)與 `NO_ENFORCER_TODAY`(沒有東西可以呼叫)是同一個缺席、
+差很多的修復成本。把兩者折成一個值會讓 S7 被描述成保護。而 `/speech/say` 那一格的 `NOT_WIRED`
+是**導出**的:一份 import 普查。**它被設計成在 S7 的在機半段落地時變紅**——一句散文不會注意到明天。
+
+**修正 4(把兩個閘拴在同一個表上):**
+`invoke` 對遠端工具的拒絕理由**讀的是 egress 表**(`EGRESS[MCP_TOOL_CALL].enforcement != ENFORCED`),
+不是另寫一條規則。閘與普查於是不可能各說各話,因為只有一份。
+對稱地,`MCP_TOOL_CALL` 那一列的 `model_reachable` 由 `REGISTRY` 導出來對帳——
+宣告一個可以被導出的值,正是一列開始過期的方式。
+
+**修正 5(這一輪順手拆掉的第二個創造者):**
+`skills/loader.py` 原本同時持有 `TOOL_NAME`、`TOOL_CONFIG`、`run_tool` 與 `MAX_TOOL_HOPS`。
+搬走它們不是整理:當那個模組持有工具面,「模型能碰到哪些工具」就由**知道技能的模組**回答,
+第二個工具會被接在第一個旁邊,而整個工具面會繼續叫一個子系統的名字。
+`read_skill_file`(執行體與 T-I3 的路徑柵欄)留在原處。
+`MAX_TOOL_HOPS` 一起搬,理由同構:它界的是**每一次**工具跳轉,不只是技能讀檔。
+
+**修正 6(搬家開的洞,由測試補上):**
+規格搬走之後,L2 包裝句仍然寫著「需要細節時用 `read_skill_file` 讀」——**散文沒有任何東西在檢查**。
+一份指名了沒人宣告的工具的提示,等於每回合都花在一次只能回 `unknown_tool` 的呼叫上。
+所以候選名由**組好的提示**用 snake_case 形狀抓出來(今天恰好抓到一個),再要求它是登錄冊的子集;
+`"read_skill_file" in prose` 這種寫法**注意不到新名字**,那正是這個 repo 反覆踩到的同一個洞。
+
+**這一節沒有測到什麼,寫在數字旁邊:**
+**沒有任何 MCP、任何 OAuth、任何網路。** 今天 `REGISTRY` 宣告零個遠端工具,所以六個結果裡的四個、
+效果拒絕、以及 `reconcile` 的兩個方向,全部**靠注入的表**證明可達——那是「分支要可達才算存在」的
+唯一辦法,也如實反映系統的現狀:這台機器人今天能做的事,是讀自己的技能檔,沒有別的。
+Client Credentials 流(mcp python-sdk v2 的 `ClientCredentialsOAuthProvider`、
+OAuth 2.1 的 PKCE 與 RFC 8707 `resource`、RFC 9728 發現)、token 的落盤(`0600`、repo 之外)、
+以及憑證**到不了提示區**的證明(要用 T-C5 那個「值落在哪一區由它從哪個參數進來決定」的同一個論證)
+都是在機半段。`TOOL_SPEC_CEILING = 400` 今天的實測是 **140**(單一工具,序列化後的字元代理),
+而「常駐目錄每回合都收費」目前是 `spec_findings(resident=True)` 的一句 **report,不是閘**——
+真正的 per-turn 成本要在機上用 `usage.inputTokens` 量,和 T-I1 同一個校準。
 
 ---
 
