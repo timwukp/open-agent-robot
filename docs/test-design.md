@@ -6,9 +6,9 @@
 
 閱讀順序:先讀 §0(為什麼這樣分級),再跳到你要動的那個子系統。
 
-**這份文件描述的是設計,不是既成事實。** 今天真正跑起來的是 566 個案例,落在
-§2.A(持久化與單寫者)、§2.D(L0 反射與憲法)、§2.H(猜拳對手建模)、§2.I(技能加載器)、
-§2.J(測試自身的健康度)、§2.K(Track C 在機量測)與 §1(替身本身的證明)七處:
+**這份文件描述的是設計,不是既成事實。** 今天真正跑起來的是 638 個案例,落在
+§2.A(持久化與單寫者)、§2.D(L0 反射與憲法)、**§2.E(Art 50 法遵)**、§2.H(猜拳對手建模)、
+§2.I(技能加載器)、§2.J(測試自身的健康度)、§2.K(Track C 在機量測)與 §1(替身本身的證明)八處:
 
 | 檔案 | 案例數 | 對應 |
 |---|---|---|
@@ -17,7 +17,9 @@
 | `tests/test_guard.py` | 74 | **T-D1 的反射半段**、**T-D2①②**、T-D3、T-D4、T-D6、T-D7、T-C5 的結構半段(L3 選到 11 個:10 個具名突變體 + 無突變對照) |
 | `tests/test_token_cost_harness.py` | 34 | T-K5、T-F5(L3 選到 8 個:7 個具名突變體 + 無突變對照) |
 | `tests/test_guardrail_latency.py` | 31 | T-K3(L3 選到 7 個:6 個具名突變體 + 無突變對照) |
-| `tests/test_meta.py` | 31 | T-J2(在沙箱子行程裡證明收集下限)、T-J5、**T-J7** |
+| `tests/test_disclosure.py` | 37 | **T-E1**、**T-E3 的結構半段**(L3 選到 9 個:8 個具名突變體 + 無突變對照) |
+| `tests/test_voices.py` | 33 | **T-E2**(引擎普查 × 兩條時長路徑的全交叉積 + `tts_node` 的唯一創造者;L3 選到 4 個:3 個具名突變體 + 無突變對照) |
+| `tests/test_meta.py` | 33 | T-J2(在沙箱子行程裡證明收集下限)、T-J5、**T-J7** |
 | `tests/test_push_branch.py` | 35 | **§7 的推送機制本身**(三方 sha、read-back、會說謊的 API 替身;L3 選到 4 個:3 個具名突變體 + 無突變對照) |
 | `tests/test_entrypoints.py` | 29 | **T-J1 的發現半段**(AST:`__main__` 閘 or import 期工作;L3 選到 3 個:2 個具名突變體 + 無突變對照) |
 | `tests/test_game_wiring.py` | 35 | T-H6(結構式)、**T-D1 的節點半段**(語句順序)+ 接線與極性(L3 選到 12 個:11 個具名突變體 + 無突變對照) |
@@ -30,21 +32,30 @@
 | `tests/test_doubles.py` | 16 | §1 的替身與注入式時鐘,含「會說謊 vs 回聲」那對並列證明 |
 
 `test_meta.py` 的離線 import 掃描沒有一份模組清單:參數直接來自
-`TESTS_DIR.glob("*.py")`(`tests/test_meta.py:85`),所以今天 `tests/` 裡的 **19 個模組
-恰好對應 19 個案例**,這一輪多出來的兩個是 `tests/test_entrypoints.py` 與
-`tests/test_push_branch.py`。這正是「**由目錄導出,不寫死清單**」的收益——一份手寫的
+`TESTS_DIR.glob("*.py")`(`tests/test_meta.py:85`),所以今天 `tests/` 裡的 **21 個模組
+恰好對應 21 個案例**,這一輪多出來的兩個是 `tests/test_disclosure.py` 與
+`tests/test_voices.py`。這正是「**由目錄導出,不寫死清單**」的收益——一份手寫的
 模組清單不會注意到新名字,而這裡的可觀察後果是一個會自己長大的數字,不是一句宣稱:
-這兩個檔案我一個字都沒改 `test_meta.py`,它自己就從 29 變成 31,而 T-J8 立刻指出
-本節的 29 過期了。
+這兩個檔案我一個字都沒改 `test_meta.py`,它自己就從 31 變成 33,而 T-J8 立刻指出
+本節的 31 過期了。
+
+S2.5 這一輪它還做了第二件事,而那件更有價值:T-E3 的瀏覽器走查需要一個 stub gateway,
+我最初把它寫成 `tests/stub_ws_server.py`,而 `websockets` 在 `FORBIDDEN_IMPORTS` 裡,
+於是這條掃描立刻紅。**正確的反應不是給它一個豁免**——`infra/entrypoints.py` 的
+`SKIP_DIR_PARTS` 含 `tests`,所以一個網路 server 停在 `tests/` 裡,恰好落在 check 8
+唯一看不見的目錄。檔案搬到 `web/stub_ws_server.py`,並在
+`infra/standalone_entrypoints.tsv` 留一行寫明理由:兩個不變量都維持絕對,而豁免變成
+一行可審查的宣告,不是守衛裡一句「這裡不用看」的註解。
 
 上表「L3 選到 N 個」的數字全部由 `pytest -m mutation --collect-only -q` 逐檔印出
-(2026-08-23 量測,全套 107 個案例),不是手數的;T-J7 保證沒有第 108 個躲在標記外面,
+(2026-08-23 量測,全套 120 個案例),不是手數的;T-J7 保證沒有第 121 個躲在標記外面,
 而 **T-J8 保證上面每一個數字都是導出來的**——包括本段自己引用的那兩個。
 
-B、C、E、F、G 各節與 D 的執行期部分隨對應階段(S2.5–S8、Track C)落地,
-在那之前它們是**待寫的契約**,不是既有的保護。每一節下方的編號修正清單記錄
-「落地時跟設計表不一樣的地方」,包含**設計表自己的通過標準被量測或實作推翻**的那幾條
-(§2.A 修正 1、2、§2.D 修正 4、§2.H 修正 1、2、7)。
+B、C、F、G 各節與 D 的執行期部分隨對應階段(S3–S8、Track C)落地,
+在那之前它們是**待寫的契約**,不是既有的保護。**§2.E 這一輪(S2.5)落地**,
+CI 只到結構層,計算後顏色那一半在 L5,證據落 `docs/evidence/t-e3-browser-disclosure.md`。
+每一節下方的編號修正清單記錄「落地時跟設計表不一樣的地方」,包含**設計表自己的通過標準
+被量測或實作推翻**的那幾條(§2.A 修正 1、2、§2.D 修正 4、**§2.E 修正 1、4**、§2.H 修正 1、2、7)。
 
 ---
 
@@ -290,18 +301,59 @@ T-C4 的 fixture **必須保證兩個分支都存在**(只剩 E 的事實、有�
 
 ### E. EU AI Act Art 50 法遵(自 2026-08-02 適用)
 
-| ID | 測試項 | 方法 | 通過標準 | 突變體 |
-|---|---|---|---|---|
-| T-E1 | 首次互動揭露不依賴 LLM | Bedrock 替身回空字串 (D) | 揭露仍然發出,且是冷啟動後**第一句** | 把揭露只寫在系統提示 → 紅 |
-| T-E2 | 每條合成音訊都有標記 | 枚舉 `tts_node` **所有分支**(串流、cached、chant、粵語 yue)(D) | 每個分支的 `tts_started` 都帶 `synthetic:true` + 引擎 id;分支覆蓋率 100%(用分支清單斷言) | 只標非 cached 分支 → 紅 |
-| T-E3 | 瀏覽器臉上看得到 | Playwright 對 stub WS 載入 `index.html` (H+D) | 元素可見,且**計算後顏色 ≠ 背景色** | 只加 class 不加樣式 → 紅 |
+| ID | 測試項 | 方法 | 通過標準 | 突變體 | 狀態 |
+|---|---|---|---|---|---|
+| T-E1 | 首次互動揭露不依賴 LLM | ①**比替身更強**:子行程裡把 `boto3`/`botocore`/`rclpy`/`websockets` 在 import hook 上封死,再跑 `safety.disclosure` ②語句順序:AST 比 `gw.disclose()` 與 `async for data in ws` 的位置 (D) | ①子行程印出 `2|0|True|disclosure_zh` ②`.disclose` 的語句索引 **<** frame loop 的語句索引,且全樹**恰好一個**觸發點 | 拿掉 `gw.disclose()` → 「never calls disclose」;把它搬進 frame loop → 「must be queued before」 | **已實作**(見修正 1:替身升級成封鎖 import,且**探針自己有存活測試**) |
+| T-E2 | 每條合成音訊都有標記 | 覆蓋率**導出**而非寫清單:引擎半段來自 `voices.ENGINES` 普查 × `SAMPLES` 集合相等;發佈半段來自 `tts_node` 的 AST(唯一創造者 + `if req.get("cache")` 兩側)(D) | 3 引擎 × 2 條時長路徑全交叉積都帶 `synthetic:true` + 引擎 id + voice;`self.pub_started.publish` 全樹**恰好一個**且在 `_publish_started` 內;`tts_node` 不得自己寫下任何 payload 鍵字面 | 第二個 inline payload → 紅;只刪 cached 那一次 `_publish_started` → 「cached path does not publish」;手搓 payload → 「spells payload keys itself」 | **已實作**(見修正 2:`chant` 不是分支;修正 3:路由與標記必須是同一次呼叫) |
+| T-E3 | 瀏覽器臉上看得到 | ①CI:靜態標記 + 顯式對比色 + 兩條防遮擋宣告(D)②L5:Playwright 對 `web/stub_ws_server.py` 載入,量 `getComputedStyle` + 25 點 `elementFromPoint` 命中測試 (H) | ①`#disclosure` 是靜態標記、前景/背景/頁面背景三者 RGB 互不相同、alpha ≠ 0、`z-index` 與 `min-height` 都在 ②`rgb(255,212,121)` on `rgb(43,33,19)` on `rgb(16,20,24)`;兩列各 **0/25** 被遮 | 只加 class 不加樣式 → 「declares no explicit color」;塗成頁面背景 → 紅;**`#10141800`(alpha 00)→ 「fully transparent」**;拿掉 `z-index` → 紅;拿掉 `min-height` → 紅;把 badge 搬進事件處理器 → 「not static markup」 | **已實作**;②的數字落 `docs/evidence/t-e3-browser-disclosure.md`,CI 有一條測試斷言那個檔案與 PNG 存在(見修正 4) |
 
 T-E3 為什麼要比顏色而不是查 class:class token 存在不等於顏色生效——
 曾有 38 個框的 token 都在 CSS 裡而全部仍然渲染成同一個灰。
 
 **誠實邊界:** 50(2) 我們做的是**串流級標記**,不是重錄後存活的水印。
 論證基礎是比例原則(技術可行性/成本/state of the art)加上「我們不落盤音訊」;
-**一旦加錄音功能就必須補真水印**。
+**一旦加錄音功能就必須補真水印**(候選庫授權未查)。
+
+#### 落地時與設計表不同的地方
+
+**1. T-E1 的替身從「會說謊」升級成「不存在」,而探針自己也要被測。**
+設計表寫「Bedrock 替身回空字串」。空字串替身能證明的是**代碼在一次壞回覆下存活**;
+要證明的其實更強:**這條路上沒有回覆可以存活**。所以改成在子行程的 `sys.meta_path`
+上封死 `boto3`/`botocore`/`rclpy`/`websockets`,再跑揭露 latch。
+但一個乾淨的探針結果毫無價值,直到你證明它真的到達了代碼——所以旁邊有
+`test_the_probe_would_notice_a_blocked_import`:在探針最前面插一行 `import boto3`,
+它必須以 `blocked by the probe: boto3` 失敗。沒有這條,一個根本沒生效的封鎖器會讓
+主測試綠得一模一樣。
+
+**2. `chant` 不是標記的分支,而這件事要被斷言而不是被列舉。**
+設計表把分支寫成「串流、cached、chant、粵語 yue」。讀代碼後:`uid == "chant"`
+只決定**可否被打斷**,payload 只是 `uid` 與 `text` 的函式,所以 chant 走的是同一個創造者。
+維持這件事的斷言是「`_publish_started` 的識別字裡不得出現 `interruptible` / `_interrupt`」——
+比在清單上多寫一行「chant」強,因為清單無法注意到未來的第三條路。
+
+**3. 路由與標記必須是同一次呼叫。**
+如果 `started_payload` 用自己那份規則重新判一次引擎,標記就可能寫著一個**沒有發出這段音訊的引擎**。
+一個自信而錯誤的標記比沒有標記更糟。證明方式是把 `voices.HAS_YUE` monkeypatch 成永不匹配:
+路由與標記必須**一起**改變,而這只有在規則只有一份的時候才會發生。
+
+**4. 瀏覽器抓到兩個 CI 抓不到的缺陷,而其中一個差點變成證據。**
+把 `#disclosure` 整條規則刪掉當負對照,瀏覽器算出 `background-color: rgba(0,0,0,0)`——
+跟頁面背景 `rgb(16,20,24)` **字串不等、畫面相同**,所以原本比字串的判定式把它判成「可見」。
+兩側都修了:瀏覽器側走到第一個 alpha > 0 的祖先,CI 側新增 `_rgba()` 正規化 3/4/6/8 位
+hex 並拒絕 alpha `00`,配具名突變體 `background: #10141800`。
+第二個缺陷只有**看 PNG** 才會發現:相機串流死掉時 `<img>` 縮成 alt 文字,`#stage` 跟著塌,
+絕對定位的 `#hud` 壓到上面兩列,把引擎 id 切一半——當時每一個計算後顏色都是對的。
+25 點命中測試從 1/25 與 5/25 降到 **0/25 與 0/25**,兩條 CSS 宣告各配一個突變體。
+還有一件必須記下來的:修完之後重測,數字**完全一樣**——reload 吃到快取的舊 CSS,
+要 `?v=2` 才讀到真值。**快取頁面不是被編輯過的檔案**,而一個假的量測差兩分鐘就寫進證據檔了。
+
+**5. stub gateway 不放在 `tests/`。**
+`tests/test_meta.py` 禁止 `tests/` 下任何模組 import `websockets`,而
+`infra/entrypoints.py` 的 `SKIP_DIR_PARTS` 含 `tests`——所以一個網路 server 停在 `tests/` 裡,
+恰好落在 check 8 唯一看不見的目錄。它搬到 `web/stub_ws_server.py`,並在
+`infra/standalone_entrypoints.tsv` 留一行寫明理由。stub 的 payload 一律由**真正的生產者**
+(`disclosure.browser_event()`、`voices.started_payload()`)產生:一個自帶 JSON 副本的 stub
+會在生產者改變形狀之後繼續綠,那時瀏覽器是對著一份虛構被驗證的。
 
 ### F. recall.py — 檢索品質、延遲、成本
 
@@ -511,7 +563,7 @@ L1 一改就紅,逼人重跑量測而不是讓舊數字繼續掛在那裡。
 | T-J1 | 部署路徑 | `infra/check_deploy.sh`:**執行** runner(`OAR_DRY=1`)而非解析它 | 啟動集合 == 回報集合;每條執行路徑存在或有活的 producer;每個 entrypoint 有人啟動或被明文豁免 | **已實作** |
 | T-J2 | 收集下限 | 逐模組收集數;掃檔數 | 任一模組收集 0 案例 → **非零退出**;`-k`/`-m` 時自動讓位 | **已實作** |
 | T-J3 | fixture 完整性 | 大小下限 + 行數下限 + sha256,登記在 `tests/fixtures.tsv` | 截斷、等長改寫、未登記的新檔,三者都紅 | **已實作** |
-| T-J4 | 突變 harness | 逐條套用具名突變體 + 無突變對照 | 每個突變體被**它該殺的那個檢查**殺掉;對照必須綠 | **已實作**;`pytest -m mutation` 在 2026-08-23 選到 **107 個案例**,分佈見檔首表格 |
+| T-J4 | 突變 harness | 逐條套用具名突變體 + 無突變對照 | 每個突變體被**它該殺的那個檢查**殺掉;對照必須綠 | **已實作**;`pytest -m mutation` 在 2026-08-23 選到 **120 個案例**,分佈見檔首表格 |
 | T-J5 | C daemon 陳舊 | 原始碼 mtime vs 執行檔 mtime;執行中行程的啟動時間 vs 執行檔 mtime | 執行檔不得舊於原始碼;執行中的行程不得舊於磁碟上的執行檔 | **已實作** |
 | T-J6 | 推送前脫敏 | `infra/redact_scan.py` 掃**即將成為 blob 的那份檔案清單**;8 個模式類各一個具名突變體 | 每個模式類被自己那條斷言抓到(比對**類名**而非只比 rc);無突變對照必須乾淨;清單缺失/為空/列到不存在的路徑 → **exit 3** | **已實作** |
 | T-J7 | **每個具名突變體都真的在 L3 裡** | 由 AST **推導**「突變體施加器」(改寫原始碼文字 `.replace` **且**把結果變回程式 `importlib`/`ast.parse`/`compile`),再要求呼叫它的測試帶 `mutation` marker | 0 個未標記;施加器所在模組數 ≥ 4 且突變測試數 ≥ 25(掃到太少視為偵測器瞎了,不是合規) | **實作時新增**(見下方) |

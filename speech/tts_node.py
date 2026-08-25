@@ -4,7 +4,8 @@ Subscribes /speech/say        String: text or JSON {"text","cache","id"}
            /speech/interrupt  Empty: abandon remaining sentences immediately
 Publishes  /robot/mouth       UInt8MultiArray 24 kHz mono s16 chunks (burst per sentence)
            /speech/tts_active Bool — half-duplex gate for asr_node
-           /speech/tts_started String JSON {"id","dur_s","t_us"} (dur exact for cached clips)
+           /speech/tts_started String JSON — see speech/voices.py:started_payload
+                                (carries the Art 50(2) synthetic marking + engine id)
            /speech/tts_done   String id
 
 Design: a worker thread consumes a queue; the rclpy executor stays free so the
@@ -12,14 +13,20 @@ interrupt callback is never blocked by a long story. Kokoro's KPipeline yields
 per-sentence audio — each sentence is burst as soon as it's synthesized, so the
 first sentence is audible in <1.5 s even for long replies. The game chant
 (id=="chant") is exempt from interruption (the beat is sacred).
+
+Engine selection and the started payload both live in `speech/voices.py`, which
+has no ROS or numpy import, so the Art 50(2) marking is testable on a laptop and
+cannot disagree with the engine that actually spoke (one call decides both).
 """
 from __future__ import annotations
 import json
 import os
 import queue
 import re
+import sys
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import rclpy
@@ -27,11 +34,13 @@ from rclpy.node import Node
 from std_msgs.msg import Bool, String, UInt8MultiArray
 from std_msgs.msg import Empty as EmptyMsg
 
+# run_ec2.sh launches this file directly, so sys.path[0] is speech/, not the repo
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from speech import voices  # noqa: E402
+
 RATE = 24000
 CHUNK = RATE * 60 // 1000 * 2  # 60 ms of s16 mono
-HAS_CJK = re.compile(r"[一-鿿]")
-# Cantonese marker characters -> route to the CosyVoice yue engine
-HAS_YUE = re.compile(r"[係唔嘅喇咩乜嘢啲嗰噉咗冇睇諗俾攞邊度緊]")
 GATE_TAIL_S = 0.35
 
 
@@ -40,8 +49,10 @@ class TtsNode(Node):
         super().__init__("tts")
         from kokoro import KPipeline
         self.get_logger().info("loading Kokoro (zh + en pipelines)…")
-        self.pipes = {"z": KPipeline(lang_code="z"), "a": KPipeline(lang_code="a")}
-        self.voices = {"z": "zf_xiaoxiao", "a": "af_heart"}
+        # derived from the engine census, so a voice name cannot be declared in
+        # voices.py and silently not loaded here
+        self.pipes = {e.id: KPipeline(lang_code=e.lang_code)
+                      for e in voices.ENGINES if e.in_process}
         self._cosyvoice = None      # lazy: Cantonese engine, ~2 GB VRAM on first use
         self.clip_cache: dict[str, np.ndarray] = {}
         self._q: queue.Queue = queue.Queue()
@@ -89,13 +100,25 @@ class TtsNode(Node):
                 self.get_logger().error(f"speak failed: {e}")
                 self.pub_active.publish(Bool(data=False))
 
+    def _publish_started(self, uid: str, text: str, dur_s: float):
+        """The single creator of a /speech/tts_started message.
+
+        Both the cached and the streaming path come through here, so the Art 50(2)
+        marking cannot be present on one and missing on the other — and a third
+        path added later inherits it instead of having to remember it.
+        """
+        self.pub_started.publish(String(data=json.dumps(voices.started_payload(
+            uid=uid, text=text, dur_s=dur_s, t_us=time.time_ns() // 1000))))
+
     def _sentences(self, text: str):
         """Yield per-sentence int16 pcm from the right engine for the text."""
-        if HAS_YUE.search(text):
+        engine = voices.engine_for(text)
+        if engine is voices.COSYVOICE_YUE:
             yield from self._sentences_yue(text)
             return
-        lang = "z" if HAS_CJK.search(text) else "a"
-        for _, _, audio in self.pipes[lang](text, voice=self.voices[lang]):
+        # An out-of-process engine added to the census without a branch here
+        # raises KeyError on self.pipes — loud, rather than quietly mis-voiced.
+        for _, _, audio in self.pipes[engine.id](text, voice=engine.voice):
             wav = np.asarray(audio, dtype=np.float32)  # kokoro yields torch Tensors
             yield (np.clip(wav, -1, 1) * 32767).astype(np.int16)
 
@@ -150,13 +173,12 @@ class TtsNode(Node):
                 pcm = np.concatenate(list(self._sentences(text)))
                 self.clip_cache[text] = pcm
             dur = len(pcm) / RATE
-            self.pub_started.publish(String(data=json.dumps(
-                {"id": uid, "dur_s": dur, "t_us": time.time_ns() // 1000})))
+            self._publish_started(uid, text, dur)
             self._burst(pcm)
             sent_s = dur
         else:
-            self.pub_started.publish(String(data=json.dumps(
-                {"id": uid, "dur_s": 0.0, "t_us": time.time_ns() // 1000})))
+            # 0.0: the length is unknown until the last sentence is synthesized
+            self._publish_started(uid, text, 0.0)
             first = True
             for pcm in self._sentences(text):
                 if interruptible and self._interrupt.is_set():
