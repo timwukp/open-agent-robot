@@ -11,6 +11,9 @@ discipline is asserted here instead of remembered:
   * `gh api -f field=@path` posts the literal string "@path" and returns 201, so no
     request body may ever be built that way
   * a zero-file or suspiciously short push is refused before anything is uploaded
+  * the mode in the list is checked against the working tree's executable bit and
+    against the base tree's mode, because the pusher's own tree check only ever
+    compared the mode it was *asked* for
 
 The network is not reachable from the suite, so the API is replaced by a double —
 and the double **lies**. An echoing double would make every verification branch
@@ -170,6 +173,85 @@ def test_an_empty_file_is_refused(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text("")
     with pytest.raises(SystemExit, match="zero-byte blob"):
         pb.main(_args(tmp_path, "100644 a.py\n"))
+
+
+# ------------------------------------------------------------------- the mode is a claim
+#
+# The pusher already asserted that every entry in the created tree carries the mode it
+# requested. That check cannot fail on a wrong request, and a wrong request is the easy
+# mistake: every other line of `.push/files.txt` says 100644, so typing 100644 for
+# `infra/run_ec2.sh` is the natural thing to do — and it silently strips the executable
+# bit from the node runner, with the blob shas agreeing, the tree entry matching the
+# request, and the read-back matching the local bytes. It surfaces as `permission
+# denied` in a fresh clone, on the deploy path. Caught while assembling the S3 push.
+
+
+def test_a_mode_that_disagrees_with_the_working_tree_is_found(tmp_path: Path) -> None:
+    """The offline half: this is the one that runs in CI, with no network at all."""
+    exe, plain = tmp_path / "run.sh", tmp_path / "mod.py"
+    exe.write_text("#!/bin/sh\n"); exe.chmod(0o755)
+    plain.write_text("x = 1\n"); plain.chmod(0o644)
+    rows = [("100644", "run.sh"), ("100644", "mod.py")]
+    assert pb.exec_bit_mismatches(rows, tmp_path) == [("run.sh", "100644", "100755")]
+    # ...and the opposite direction, which would mark a plain file executable
+    assert pb.exec_bit_mismatches([("100755", "mod.py")], tmp_path) == [
+        ("mod.py", "100755", "100644")]
+    assert pb.exec_bit_mismatches([("100755", "run.sh"), ("100644", "mod.py")],
+                                  tmp_path) == []
+
+
+def test_only_the_executable_bit_is_compared_not_the_whole_mode(tmp_path: Path) -> None:
+    """A group-writable file is still `100644` to git, so it must not be a finding.
+
+    Comparing full modes would make the guard fail on a difference git cannot even
+    record, which is how a guard gets switched off.
+    """
+    p = tmp_path / "mod.py"
+    p.write_text("x = 1\n"); p.chmod(0o664)
+    assert pb.exec_bit_mismatches([("100644", "mod.py")], tmp_path) == []
+
+
+def test_a_listed_path_that_is_absent_is_left_to_the_upload(tmp_path: Path) -> None:
+    """Two findings for one cause is how the real one gets scrolled past."""
+    assert pb.exec_bit_mismatches([("100644", "gone.py")], tmp_path) == []
+
+
+def test_the_real_push_list_agrees_with_the_working_tree(repo_root: Path) -> None:
+    """The live assertion: this is what went red on `infra/run_ec2.sh` at 100644."""
+    rows = pb.parse_files(repo_root / ".push" / "files.txt")
+    assert pb.exec_bit_mismatches(rows, repo_root) == []
+
+
+def test_a_mode_that_regresses_against_the_base_tree_is_found() -> None:
+    """The online half. A pure function over a mode map, so it needs no double."""
+    base = {"infra/run_ec2.sh": "100755", "README.md": "100644"}
+    rows = [("100644", "infra/run_ec2.sh"), ("100644", "README.md")]
+    assert pb.mode_regressions(rows, base) == [
+        ("infra/run_ec2.sh", "100755", "100644")]
+
+
+def test_a_new_path_has_no_mode_to_regress_against() -> None:
+    """A file absent from the base is new; there is no prior value to compare to, and
+    inventing one from the filesystem is what `exec_bit_mismatches` is for."""
+    assert pb.mode_regressions([("100755", "memory/profile.py")], {}) == []
+
+
+def test_a_named_mode_change_is_allowed_and_an_unnamed_one_is_not() -> None:
+    base = {"a.sh": "100644", "b.sh": "100644"}
+    rows = [("100755", "a.sh"), ("100755", "b.sh")]
+    assert pb.mode_regressions(rows, base, allowed=("a.sh",)) == [
+        ("b.sh", "100644", "100755")]
+
+
+def test_the_exec_bit_guard_refuses_the_push_before_any_upload(tmp_path: Path,
+                                                              monkeypatch) -> None:
+    """Refusal, not just detection: the function returning a list proves nothing about
+    `main` acting on it. The double serves nothing, so any API call would fail loudly."""
+    exe = tmp_path / "run.sh"
+    exe.write_text("#!/bin/sh\n"); exe.chmod(0o755)
+    monkeypatch.setattr(pb, "api", Api())
+    with pytest.raises(SystemExit, match="executable bit"):
+        pb.main(_args(tmp_path, "100644 run.sh\n"))
 
 
 # --------------------------------------------------------------- the double that lies
@@ -352,6 +434,28 @@ def test_mutant_the_zero_file_refusal_removed(tmp_path: Path) -> None:
     assert "must not report success" not in str(exc.value)
 
 
+@pytest.mark.mutation
+def test_mutant_the_exec_bit_refusal_removed(tmp_path: Path, monkeypatch) -> None:
+    """Without it, a 100644 row for a 0755 file walks straight past every local check.
+
+    The double serves only blobs, so reaching it at all is the evidence: the mutant got
+    as far as resolving the base ref while carrying a mode that would strip an
+    executable bit, which is exactly how the original defect would have shipped.
+    """
+    src = SOURCE.replace("    if wrong_bit:\n", "    if False:\n")
+    assert src != SOURCE, "mutant anchor no longer present in .push/push_branch.py"
+    mut = _compile(src, tmp_path)
+    exe = tmp_path / "run.sh"
+    exe.write_text("#!/bin/sh\n"); exe.chmod(0o755)
+    monkeypatch.setattr(mut, "api", Api())
+    with pytest.raises(Exception) as exc:
+        mut.main(_args(tmp_path, "100644 run.sh\n"))
+    assert "executable bit" not in str(exc.value), (
+        "the mutant still refused, so this test is not measuring the guard")
+    assert "git/ref/heads" in str(exc.value), (
+        "expected the mutant to reach the base-ref lookup carrying the wrong mode")
+
+
 def _compile(src: str, tmp_path: Path):
     target = tmp_path / "push_branch_mutant.py"
     target.write_text(src, encoding="utf-8")
@@ -362,8 +466,8 @@ def _compile(src: str, tmp_path: Path):
 
 
 @pytest.mark.mutation
-def test_control_the_unmutated_pusher_still_rejects_all_three(tmp_path: Path,
-                                                              monkeypatch) -> None:
+def test_control_the_unmutated_pusher_still_rejects_all_four(tmp_path: Path,
+                                                             monkeypatch) -> None:
     """If this control fails the mutants above are uninterpretable."""
     (tmp_path / "a.py").write_text('print("x")\n', encoding="utf-8")
     monkeypatch.setattr(pb, "api", Api(wrong_sha=True))
@@ -374,6 +478,10 @@ def test_control_the_unmutated_pusher_still_rejects_all_three(tmp_path: Path,
         pb.upload([("100644", "a.py")], tmp_path, "o/r")
     with pytest.raises(SystemExit, match="must not report success"):
         pb.main(_args(tmp_path, "# nothing\n"))
+    exe = tmp_path / "run.sh"
+    exe.write_text("#!/bin/sh\n"); exe.chmod(0o755)
+    with pytest.raises(SystemExit, match="executable bit"):
+        pb.main(_args(tmp_path, "100644 run.sh\n"))
 
 
 def test_git_is_available_so_the_two_way_derivation_is_not_silently_one_way() -> None:
