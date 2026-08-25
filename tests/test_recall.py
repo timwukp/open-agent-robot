@@ -96,7 +96,8 @@ def plant(root: Path, *, events=None, episodes=None, card=None, rps=None) -> Pat
             encoding="utf-8")
     if rps is not None:
         (root / rc.RPS_ARTIFACT).write_text(
-            json.dumps({"rounds": rps}, ensure_ascii=False), encoding="utf-8")
+            json.dumps({"version": 1, "rounds": rps}, ensure_ascii=False),
+            encoding="utf-8")
     return root
 
 
