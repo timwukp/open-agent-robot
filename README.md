@@ -74,6 +74,7 @@ web/robot-view/  (browser)               │      ├─ perception/ hand_node  
 | Reasoning | `agent/agent_node.py` | Bedrock Converse, Claude Sonnet 5 global inference profile, one downscaled camera frame attached per turn for open-vocabulary scene questions |
 | Skills | `skills/loader.py` | Three-level loading: a name + one sentence resident per skill (96 measured input tokens), the body attached to the turn when a **frozen phrase table** — never the model — matches, deeper files pulled through a `read_skill_file` tool confined to `skills/` |
 | Reflexes | `game/game_node.py` | Robot-led chant, resolve window `[T−0.1 s, T+0.6 s]`, stop words honoured in **any** state, per-game cooldown |
+| Opponent model | `game/opponent.py` | Order-2..4 conditional transition tables over the **user's own** (move, outcome) history — never over the robot's moves, which would hand a counter-learner a lever on the context it is predicted from. Exploited only while an **anytime-valid e-value gate** (Ville, δ = 0.05 for the whole lifetime of one opponent) says this person has demonstrably left uniform; otherwise a fair 1/3 coin. Evaluated offline, not yet wired into `game_node` |
 | Body | `body/body_node.py` | MuJoCo kinematic puppet of a humanoid with three-fingered Dex3-1 hands (thumb 3 DOF, index 2, middle 2 — 7 per hand), streamed to the browser as MJPEG |
 | Transport | `daemon/main.c`, `gateway/ws_gateway.py` | One WebSocket, binary framed; audio prioritised over video, both flow-controlled |
 
@@ -113,7 +114,7 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 | `speech/`, `perception/`, `agent/`, `game/`, `body/`, `gateway/` | ROS 2 nodes, one concern each |
 | `web/robot-view/` | Single-page face: MJPEG body view + event HUD |
 | `skills/` | Markdown skills plus the loader that gates them. See [`skills/README.md`](skills/README.md) |
-| `tests/` | Offline suite: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
+| `tests/` | Offline suite, 239 cases: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
 | `infra/` | Provisioning, instance setup, process supervision (`run_ec2.sh` uses pid files, never `pkill` patterns) |
 | `docs/` | Design record: seven research rounds (raw evidence under `docs/evidence/`), the day-0 latency measurements, the demo runbook, the memory/safety design critique, and the [test contract](docs/test-design.md) |
 
@@ -142,6 +143,18 @@ guard could not run** — a guard that cannot run must never report clean.
 
 The full contract, including the items still unimplemented, is
 [`docs/test-design.md`](docs/test-design.md).
+
+**Two of that contract's own pass criteria were wrong, and the suite says so.** The
+opponent model was supposed to fail its uniform-opponent case once the confidence
+gate was removed — but rock-paper-scissors is zero-sum and symmetric, so against a
+uniform opponent *every* policy scores exactly 0 in expectation. That criterion was
+unachievable in principle, not unimplemented; the discriminating assertion is the
+Ville bound instead (the gate ever opens on 3/100 seeds gated, 100/100 ungated). The
+second criterion predicted the gate would stay shut against an adaptive
+counter-learner. It is open on 71% of rounds and the model *wins* — because the loop
+is closed: the robot's moves are a function of the user's own history, so an opponent
+reacting to the robot is thereby reacting to that history. Both corrections, with the
+measurements that forced them, are in §2.H of the contract.
 
 ## Design record
 

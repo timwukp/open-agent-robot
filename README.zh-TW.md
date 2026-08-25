@@ -42,6 +42,7 @@ web/robot-view/  (瀏覽器)                 │      ├─ perception/ hand_no
 | 想 | `agent/agent_node.py` | Bedrock Converse、Claude Sonnet 5 global 推論設定檔;每輪附一張縮圖,支援開放詞彙的場景問答 |
 | 技能 | `skills/loader.py` | 三級載入:每個技能常駐「名稱 + 一句話」(實測 96 個輸入 token);由**凍結的片語表**(而不是模型)命中時,才把本文附進當前這一回合;更深的檔案由模型透過 `read_skill_file` 自己取,該工具被圍堵在 `skills/` 之內 |
 | 反射 | `game/game_node.py` | 機器人主導口令,判定窗 `[T−0.1 s, T+0.6 s]`;停止詞在**任何**狀態都生效;每局冷卻 |
+| 對手模型 | `game/opponent.py` | order-2..4 條件轉移表,鍵在**使用者自己的**(手勢, 勝負)歷史——絕不鍵在機器人的出拳,那等於給反學習者一根槓桿去操縱「它被預測時所用的那個 context」。只在**anytime-valid e-value 閘**(Ville,δ = 0.05 是單一對手的**終身**誤開上界)判定這個人確實離開均勻時才利用,否則出公平的 1/3 硬幣。已離線評測,**尚未**接進 `game_node` |
 | 身體 | `body/body_node.py` | MuJoCo 運動學木偶(Dex3-1 三指手:拇指 3 自由度、食指 2、中指 2,單手 7 個),以 MJPEG 串到瀏覽器 |
 | 傳輸 | `daemon/main.c`、`gateway/ws_gateway.py` | 單一 WebSocket、二進位分幀;音訊優先於視訊,兩者都有流控 |
 
@@ -80,7 +81,7 @@ open web/robot-view/index.html
 | `speech/`、`perception/`、`agent/`、`game/`、`body/`、`gateway/` | ROS 2 節點,一個節點一個關注點 |
 | `web/robot-view/` | 單頁「臉」:MJPEG 身體視圖 + 事件 HUD |
 | `skills/` | Markdown 技能,以及替它們把關的加載器。見 [`skills/README.md`](skills/README.md) |
-| `tests/` | 離線測試:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
+| `tests/` | 離線測試 239 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
 | `infra/` | 開機供裝、環境安裝、行程監管(`run_ec2.sh` 用 pid 檔,**絕不**用 `pkill` 樣式) |
 | `docs/` | 設計記錄:七輪研究(原始證據在 `docs/evidence/`)、day-0 延遲量測、demo 手冊、記憶與安全的設計批判,以及[測試契約](docs/test-design.md) |
 
@@ -104,6 +105,14 @@ infra/check_deploy.sh      # repo 裡的每個節點,runner 真的會啟動它�
 一個跑不起來的守衛,絕不能回報「乾淨」。
 
 完整契約(含尚未實作的項目)在 [`docs/test-design.md`](docs/test-design.md)。
+
+**那份契約自己有兩條通過標準是錯的,而測試把它說出來了。** 原本要求「拿掉信賴閘之後,
+均勻對手那一案必須紅」——但猜拳是零和且對稱的,面對均勻對手,**任何**策略的期望分數
+恰好是 0。那條標準在原理上就做不到,不是沒實作;判別斷言因此改成 Ville 界
+(曾開過閘的 seed 比例:設閘 3/100,未設閘 100/100)。第二條標準預測閘面對會適應的
+反學習者會關著。實測是 **71% 的回合開著,而模型還贏**——因為迴路是閉合的:
+機器人的出拳是使用者自身歷史的函數,所以一個對機器人反應的對手,**因此就是**
+在對那段歷史反應。兩處修正與逼出它們的量測都在契約的 §2.H。
 
 ## 設計記錄
 
