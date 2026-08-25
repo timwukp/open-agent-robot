@@ -361,6 +361,7 @@ SAY = "/speech/say"
 GESTURE = "/body/gesture"
 GAME_CMD = "/game/cmd"
 INTERRUPT = "/speech/interrupt"
+AUDIT = "/memory/audit"
 SKILL_TOOL_CALL = "tool_call:read_skill_file"
 MCP_TOOL_CALL = "tool_call:mcp"
 
@@ -419,6 +420,19 @@ EGRESS: dict[str, Channel] = {
         enforcement=NO_ENFORCER_TODAY, enforcer=None,
         reason=("published by on_asr on barge-in, never from model text; it carries "
                 "no content and its worst case is silence, which is the safe end."),
+    ),
+    AUDIT: Channel(
+        name=AUDIT, carries="the composed-turn record, on its way to the one writer",
+        model_reachable=False,
+        enforcement=ENFORCED, enforcer="memory.store.check_audit",
+        reason=("R1.1 added it, and it is the one egress row whose enforcer is on the "
+                "*receiving* side: agent_node holds no Store, so the record travels one "
+                "topic hop and `memory_node.on_audit` appends it, where check_audit "
+                "refuses any field the `chat` row does not declare. Not model-reachable "
+                "— every field is derived from the Assembly (block names, a character "
+                "count, findings this repo's own code wrote), and no model output "
+                "reaches it. A record the robot could dictate would be an audit stream "
+                "the audited party writes."),
     ),
     SKILL_TOOL_CALL: Channel(
         name=SKILL_TOOL_CALL, carries="a filesystem read under skills/",

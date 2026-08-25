@@ -1,119 +1,96 @@
-# R0b-2 — 讓「docs/ 底下每一份文件現在算什麼」變成一個閘,
-# 並且把那個閘反過來套在寫下它的那一輪自己身上。
+# R1.1 — 把 /memory/profile 接進提示,並且對「回合早於卡片」出一個 finding。
 #
-# 這一輪三件事:docs/INDEX.md(每一份文件一列,狀態取自封閉集)、
-# infra/doc_status.py 對目錄兩個方向對帳的閘、以及把 infra/doc_counts.py 的 DOCS
-# 從「test-design.md + 兩份 README」擴大到含 design.md / design.zh-TW.md / plan.md。
-# 最後那一項是 R0b-1 自己在 §7 第 2 條寫下的缺口 —— 那一輪帶了三個沒有導出過程的
-# 數字進來,而它們之所以活得下來,正是因為守衛的範圍不含那三份文件。
+# R1 六個接線 PR 的第一個。agent_node 訂閱 latched 的 /memory/profile、把卡片
+# 傳進 context.assemble(card=…)、卡片到達時**重組**提示。graph_gaps.tsv 少一列,
+# dormant_seams.tsv 少兩列。
 #
-# 而擴大 DOCS 的方式本身是這一輪最值得寫的一件。第一版是「再加幾個 pattern」——
-# 一份我記得的句子清單。改成兩個**導出**的檢查之後,它們在第一次執行就抓到三個
-# 真的陳舊數字:
-#   1. §0 表有 33 列,每一列都帶一個「L3 選到 N 個」而**沒有任何讀者**。現在那個
-#      數字由一個走訪整張表的迴圈對 `pytest -m mutation` 的逐檔收集數對帳,
-#      而它立刻報出 tests/test_consolidate.py 寫 13、突變層收 12
-#      (查了原始碼:11 個具名突變體 + test_no_mutant_control = 12,那一列的
-#      「12 個具名突變體」也高了一個),以及兩列**完全沒寫**總數。
-#   2. 「沒寫總數」那兩列不是筆誤,是一個**被刪掉的突變體會留下的樣子** ——
-#      所以四個分支都要出 finding:寫了但漂了、寫了但那一層收不到東西、
-#      沒寫但那一層有東西、以及一列裡寫了兩個數(那時沒有任何單一數字被檢查)。
-#      **未編號就是未被計數**;而 tests/test_deploy_path.py 的「17 個具名突變體 +
-#      一個對照」與 test_redact_scan.py 的「8 個 + 無突變對照」讀者要自己加,
-#      而閘不做算術,所以兩列都補上 18 與 10 這兩個總數本身。
-#   3. 七個段落引用某個模組的案例數,同樣沒有讀者。現在由 PROSE_CASES 掃出來,
-#      掃到零處是 finding —— 零代表句型被改寫了,而不是代表沒有問題。
+# **誠實邊界,只講一次而且是字面意思:結構斷言證明線被宣告了,不證明訊息真的流過去。**
+# 兩個節點都 import rclpy,而 test-design.md §6.1 要求這套測試在沒有 ROS 的筆電上跑,
+# 所以每一條斷言都是對節點的**原始碼**做的。證明卡片真的到得了是 L4,而 L4 需要 /32。
 #
-# 一個讀者、一個格式:TABLE_ROW 被加寬成把散文那一格當 group 3 抓回來,
-# 而**不是**在同一列上再加第二條 regex。兩條 regex 讀同一列,會在對方移動的時候
-# 各自保持綠色。
+# 計劃 §4 的 R1.1 那一列有四件事,三件的結果跟計劃不同:
+#   1. assemble 在 __init__ 只跑一次而卡片是異步的 —— 計劃自己說這是設計決定不是接線。
+#      解法:assemble 是純函式,所以卡片到達時重組提示,而早於卡片的那個回合留下
+#      一筆稽核紀錄。一個第一回合安靜地忘記你、第二回合又記得你的機器人,比一個
+#      從來不記得的更糟,因為它的日誌分辨不出這兩件事。
+#   2. **guard.audit_record 兩個方向都接不了那筆紀錄。** context.audit_payload 的
+#      docstring 指名它是消費者;store.check_audit 兩邊都拒絕:留著 guard.audit_record
+#      蓋的 kind="audit",blocks/chars/findings 就是未宣告欄位;改成 "chat",
+#      action/decision/reason 就是。那句錯的話被跟著走過三個檔案(docstring、
+#      引用它的 AUDIT_FIELDS 註解、以及 dormant_seams.tsv 說它是這個接縫呼叫者的那一列)。
+#      現在它是兩條 pytest.raises,而不是第四句話 —— 一句被更正的 docstring 仍然是 docstring。
+#   3. **unlock_for_s5() 從來就不是 R1.1 的,而 R1.1 是那個必須把這件事說出來的回合。**
+#      那個鎖寫下來的理由是 provenance:一個語義事實必須指名它從哪些 episode 來,
+#      這樣刪掉一個 episode 才會刪掉它產生的東西。episode 要到 R1.3 才有,所以現在
+#      寫下的卡片會裝著任何刪除都到不了的事實。R1.1 接的是**讀**的那一半,不能轉那把鑰匙。
 #
-# 這份清單由**與 base tree 對帳**產生,不是憑記憶列的:base 是
-# r0b1-design-doc 的 f21247898fef(tree 3075a7cd0d1b,151 個 blob,truncated=false),
-# 把工作樹每個檔案的 `git hash-object` 跟它比一次,得到 13 個變更 + 4 個新增;
-# 扣掉刻意排除的 5 個之後,再加上推送機制自己的兩行,總共 19 個 blob。
+# 稽核紀錄走**一跳**而不是第二個寫入者:agent_node 手上沒有 Store,它把紀錄發到
+# /memory/audit,memory_node.on_audit 落盤。兩個寫入者會讓 audit.jsonl 的順序變成
+# 沒有人檢查的主張,並且讓那個檔案裡的缺口跟一筆被刪掉的紀錄長得一樣。
 #
-# 這一輪**疊在 #29 上**(分支 r0b1-design-doc),不是從 main 開的:doc_counts.py 的
-# DOCS 擴大到 design.md / design.zh-TW.md / plan.md,而那三份文件只在 r0b1-design-doc
-# 上存在。從 main 開會產出一個引用不存在檔案的閘。連帶地 #28 必須先 merge,
-# 因為 #29 疊在它上面。
+# 一個新 topic 讓四個閘變紅,而其中兩個紅是**閘自己的缺陷**:
+#   - 一個子字串分不出發佈者與訂閱者(舊的卡片發佈者普查掃的是文字 "/memory/profile")。
+#   - 一個只讀字面值的 parser 不是把普查**縮小**,是把它**弄崩**:
+#     create_publisher(String, AUDIT_TOPIC, 10) 是這個 codebase 一直在用的形式,
+#     而那個存在目的就是「注意到新的外流通道」的閘看不見一個這樣命名的通道。
+#   兩個現在都去問 infra/ros_census.py —— topic 圖唯一的讀者,它解析常數,
+#   而且對解不開的形式**拋異常**而不是安靜地縮小範圍。
 #
-# 對出來的差集裡有五個檔案刻意不在清單上:daemon/miniaudio.h 與 daemon/oar-daemon
-# 是廠商標頭與建置產物,infra/local.env 與 infra/ssh_config 帶帳號專屬值且 git-ignored,
-# .push/message.txt 是這次推送的訊息本體。
+# 還有一個沒能重現的數字:docs/design.md 的休眠百分比。這一輪把那道 find 走法寫下來
+# (37,062 行 → 24.2%,先前三次讀數 26.6% / 25.8% / 25.3% 都沒有記下走法,而這一輪
+# 沒能把 35,507 重現到 1,249 行以內),並且明說「從 25.3% 走到 24.2% 不可以讀成進展」
+# —— 一部分是換了走法,一部分是新寫的 600 行測試。這個數字在這一輪自己又動過一次
+# (36,995 → 37,062),因為修那個散文閘又加了 67 行;它是佈景,不是進度。要引用就引用接縫數。
 #
-# 十三個變更檔在 base tree 與磁碟上都是 100644,四個新增的在磁碟上也是 100644,
-# 只有 .push/push_branch.py 是 100755(它在 base tree 上就是),沒有 --allow-mode-change。
+# 逐位元推送慣例照舊:每個 blob 對 git hash-object 驗過,推完再逐位元讀回來比對。
+# infra/local.env 與 infra/ssh_config 帶帳號專屬值,永遠不進這個清單。
+# daemon/oar-daemon 與 daemon/miniaudio.h 是建置產物與 vendored 標頭,同樣不推。
 
-# 每一份 docs/*.md 一列:path / status / supersedes_or_superseded_by / reason。
-# status 是封閉集(current / evidence / superseded),而封閉集的重點在**成員**不在家族:
-# 一個前綴或一次 .lower() 都會讓自由文字以另一種拼法回來。
-100644 docs/INDEX.md
+# --- 這一輪的代碼:接線的兩端
+100644 agent/agent_node.py
+100644 memory/memory_node.py
 
-# 閘。兩個方向都查:磁碟上有 docs/*.md 而表裡沒有列 → 紅(新文件不能靜默加入);
-# 表裡有列而檔案不存在 → 紅(陳舊豁免)。外加 census 的 ran flag ——
-# 掃到 0 份文件要 exit 非零,因為「0 份」與「0 個問題」在退出碼上長得一樣。
-# 兩邊的成員資格都是**導出**的:一邊 glob 目錄,一邊讀表,而測試斷言兩邊的對稱差是空的。
-100644 infra/doc_status.py
-100644 infra/doc_status.tsv
+# --- 被那條線碰到的三個檔案:一個 docstring 被證偽、一個 schema 註解跟著錯、
+#     一個新的 EGRESS 列(唯一一個強制者在**接收端**的外流列)
+100644 agent/context.py
+100644 memory/store.py
+100644 agent/tools.py
 
-# 37 個案例(13 個在 L1、24 個掛 mutation)。每一條斷言配一個具名突變體:
-# 只查一個方向的、把 status 當前綴比的、沒有 ran flag 的、以及把 superseded 指向
-# 一個不存在路徑仍然放行的。
-100644 tests/test_doc_status.py
+# --- 這一輪的測試:27 個案例,12 個進 L3(11 個具名突變體 + 無突變對照)
+100644 tests/test_profile_wiring.py
 
-# DOCS 從四份擴大到七份,外加上面那三個導出的檢查(逐列 L3 總數四分支、
-# 散文案例數 + ran flag、§3 自己那三個數字)。
+# --- 兩個宣稱得比自己看得到的更多的發現式模式,以及兩個必須加寬的普查
+100644 tests/test_profile.py
+100644 tests/test_tools.py
+100644 tests/test_audit_schema.py
+
+# --- 一個把「重排一行」讀成「改寫一句」的散文閘,以及它的具名突變體
 100644 infra/doc_counts.py
-
-# 59 個案例,L3 選到 11 個(10 個具名突變體 + 無突變對照),其中**四個是這一輪新增的**,
-# 對應上面每一個新分支:少了逐列比較的、只看寫了總數那些列的、只讀表不讀散文的、
-# 以及沒有 ran flag 的。最後那一個是
-# test_mutant_without_the_ran_flag_reports_clean_when_the_phrasing_moved 用
-# PROSE_CASES.sub() 把每一處句型改寫掉,然後斷言突變體回 []、真的稽核回那一條
-# ran flag finding —— 一個掃不到東西的掃描器不准回報乾淨。
 100644 tests/test_doc_counts.py
 
-# §0 表補上三個陳舊的 L3 總數與兩個缺的總數;§3 整段用這一輪的重新量測重寫。
-# 這一輪的量測結果不是那些秒數,是「一個窄的 n=2 區間不是穩定性的證據」:
-# 整套最早兩趟讀到 239.4 與 239.4(到小數第一位都一樣,寬度 0.0 s),
-# 同一條指令在同一棵樹上再跑六趟,八趟合起來跨 137 s。
-# 那個寬度殺掉了兩趟版本已經寫下的三個結論 —— 有負載時比較慢(第五趟 229.0 s
-# 低於無負載的 239.4)、部分之和小於全體(兩半相加 230.1–310.9 整段落在區間裡)、
-# 這一輪比上一輪慢(239.4 就在區間裡)。§3 因此在每個區間旁邊寫 n,
-# 並寫下停止規則:活著的那個結論(L1 對 30 s 超標 3.1–4.0×)是一個數量級的差,
-# 不需要第九趟;而任何尺度小於 137 s 的計時主張,在這台機器上這種負載下量不出來。
-100644 docs/test-design.md
+# --- 兩份登錄冊:graph_gaps 少一列,dormant_seams 少兩列並重分類第三列;
+#     /game/rps_round 那一列的理由也不再成立(它說 memory_node「完全沒有訂閱」)
+100644 infra/graph_gaps.tsv
+100644 infra/dormant_seams.tsv
 
-# marker 說明同步同一組區間與同一條規則(n=2 的寬度是下界,不是穩定性主張)。
-# 它跟 marker 在同一個檔案,所以不會跟代碼脫節;裡面的 1586 / 333 由 doc_counts.py 閘住。
-100644 pytest.ini
-
-# §7 第 4 條:一個計時數字除了日期與分母,還要帶它的 n 與機器的負載。
-# 兩份語言版同一個 PR 同步,每一個數字兩邊一致。
+# --- 文件:雙語同一個 PR,每一個數字兩邊相同
 100644 docs/design.md
 100644 docs/design.zh-TW.md
-
-# §8 的「每一輪重新量」加上「量的時候要記 n 與負載」,並寫下這一輪被撤回的三個結論。
-# §3 的 measured inventory 從 16 files 動到 17(docs/INDEX.md 落地),
-# 而 R0b-1 的訊息預告過這個數字會在**這個** PR 裡動 —— 現在它動了。
 100644 docs/plan.md
-
-# 案例數 1586 / 突變體 333,兩份 README 同一個 PR 同步(doc_counts.py 閘住這兩個數)。
-# README.zh-TW.md 的設計記錄一節現在連到 docs/INDEX.md:R0b-1 刻意不連,
-# 因為那時它還沒落地,而一個懸空連結放在 repo 前門是最沒必要的錯。這一輪它落地了。
+100644 docs/test-design.md
+100644 docs/workflow.md
 100644 README.md
 100644 README.zh-TW.md
+100644 pytest.ini
 
-# 新增一個 standalone entrypoint(infra/doc_status.py)與一個新的休眠接縫,
-# 所以登錄冊、普查數(42 → 43 列)與那張圖都跟著動。SVG 是**重建過**的:
-# 重跑 infra/arch_render.py 之後 git hash-object 不變,證明它不是一份舊產物。
-100644 infra/arch_render.py
-100644 infra/dormant_seams.tsv
-100644 infra/standalone_entrypoints.tsv
+# --- 圖:infra/arch_render.py 重繪,兩次重建位元相同
 100644 docs/architecture.svg
 
+# --- 這一輪自己的推送紀錄。push_branch.py 這一輪一個字都沒動,但它必須在清單裡:
+#     tests/test_push_branch.py 守的不變量是「推送清單與推送器兩個都要在清單裡,
+#     否則這個機制在它產生的那棵樹裡不可審」—— 那是關於**被推出去的樹**的主張,
+#     不是關於這一輪的 diff 的。第一版把它拿掉了,理由是「沒有變」,而那個閘紅了。
+#     .push/message.txt 則刻意不在:它是 PR 的內文,住在 PR 上;把它也推進樹裡
+#     會讓同一段文字有兩個位置,而其中一個沒有任何讀者。
 100644 .push/files.txt
-# tests/test_push_branch.py 要求推送機制本身出現在它產出的樹裡:
-# 清單與推送器兩個都要在清單上,否則那棵樹裡的機制無法被複查。
 100755 .push/push_branch.py

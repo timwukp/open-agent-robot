@@ -97,8 +97,18 @@ def quoted(text: str, pattern: str) -> tuple[int | None, str]:
 
     A pattern that matches nothing, or matches twice, returns None — see rule 5 above.
     Rewording the sentence must break the check loudly rather than exempt it.
+
+    Every run of whitespace collapses to one space before matching, because a markdown
+    paragraph's line breaks are not part of its prose. R1.1 found this the way it is always
+    found: rewrapping a paragraph — not touching a word of it — moved a newline into the
+    middle of "carries all 41 with a named reason" and the check reported `cannot check`.
+    That is the loud failure this function is built to give, so nothing was hidden; but the
+    reword it reported never happened, and a gate that cries wolf at line wrapping teaches
+    the next reader to re-wrap the number instead of the pattern. Four patterns already
+    spelled a space `\\s+` for exactly this reason, which made wrap-tolerance a property of
+    whoever remembered to type it. It is a property of the reader now.
     """
-    found = re.findall(pattern, text, re.S)
+    found = re.findall(pattern, re.sub(r"\s+", " ", text), re.S)
     if not found:
         return None, "the sentence this check reads is no longer in the document"
     if len(found) > 1:

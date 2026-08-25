@@ -28,6 +28,16 @@ correct offline and absent from the running robot (T-C5). Keeping the assembly i
 one module is what lets a test diff the instruction region byte-for-byte against a
 baseline; a node that concatenated its own strings would have to be launched to be
 checked, and this suite never launches rclpy.
+
+Memory: the profile card arrives on the latched `/memory/profile` and is forwarded into
+`context.assemble(card=…)`. That parameter existed and was passed by nothing for two
+stages — `assemble` ran on every turn with the card argument at its default, so the
+first of this project's five promises ("remembers you") was correct offline and absent
+from the running robot, the same defect shape as the constitution before S8. Because the
+card is asynchronous and `assemble` is pure, the prompt is **re-composed** when the card
+lands, and a turn that beats it leaves an audit record saying so. This node writes no
+files: `memory/store.py` is the single writer, so the audit record goes out on
+`/memory/audit` and memory_node appends it.
 """
 from __future__ import annotations
 import json
@@ -38,6 +48,8 @@ from pathlib import Path
 import boto3
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import (DurabilityPolicy, HistoryPolicy, QoSProfile,
+                       ReliabilityPolicy)
 from std_msgs.msg import String
 
 # run_ec2.sh launches this file directly, so sys.path[0] is agent/, not the repo
@@ -46,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent import context  # noqa: E402
 from agent import tools  # noqa: E402
+from memory import profile as pf  # noqa: E402
 from safety import guard  # noqa: E402
 from skills import loader  # noqa: E402
 
@@ -56,6 +69,29 @@ MODEL_ID = "global.anthropic.claude-sonnet-5"
 REGION = "ap-southeast-1"
 
 GAME_TRIGGERS = ("石頭剪刀布", "石头剪刀布", "rock paper scissors", "剪刀石頭布")
+
+# `/memory/profile` and `/memory/audit` are memory_node's names: it owns the card and
+# it is the single writer of the audit stream. These are **copies**, and an unpinned
+# copy drifts — `tests/test_profile_wiring.py` reads both assignments out of
+# `memory/memory_node.py` by AST and asserts they are identical, so this file cannot be
+# pointed at a topic nobody publishes without going red. Importing the names instead
+# would make the brain import a second ROS node module, which is what would make
+# `infra/wiring_census.py` report memory_node as a file the agent reaches.
+PROFILE_TOPIC = "/memory/profile"
+AUDIT_TOPIC = "/memory/audit"
+
+# Durability has to **match** the publisher's or the card silently never arrives.
+# memory_node publishes it once, at boot, with no republish timer, and its docstring
+# says why: a timer would make a subscriber that forgot `transient_local` look like it
+# works, because the card would turn up on the second tick — and then the first turn,
+# the one that matters, has no profile. A volatile subscription here would leave every
+# turn card-less on a robot whose own log says the card was published.
+PROFILE_QOS = QoSProfile(
+    depth=1,
+    history=HistoryPolicy.KEEP_LAST,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+)
 
 
 class AgentNode(Node):
@@ -80,11 +116,16 @@ class AgentNode(Node):
         # anyway is the one state safety/guard.py:load_constitution exists to
         # prevent. Failing here is loud, launch-time, and fixable in one file.
         self.constitution = guard.load_constitution()
-        assembly = context.assemble(self.constitution,
-                                    skills_index=loader.l1_index(self.skills))
-        self.system_text = assembly.prompt
-        for finding in assembly.findings:
-            self.get_logger().warning(f"context: {finding}")
+        # No card yet, and that is a state with a name rather than an absence: the
+        # first prompt is composed without it, `_compose` records the degradation, and
+        # `on_profile` rebuilds the prompt the moment memory_node's latched card lands.
+        self.card: pf.ProfileCard | None = None
+        # Created before the first `_compose`, because that call already produces an
+        # audit record. A publisher made afterwards would drop the boot record on the
+        # floor and the log would still say the prompt was composed.
+        self.pub_audit = self.create_publisher(String, AUDIT_TOPIC, 10)
+        self._compose("boot")
+        self.create_subscription(String, PROFILE_TOPIC, self.on_profile, PROFILE_QOS)
         self.history: list[dict] = []
         self.busy = threading.Lock()
         self.pub_say = self.create_publisher(String, "/speech/say", 10)
@@ -112,6 +153,82 @@ class AgentNode(Node):
         self.get_logger().info(
             f"agent ready ({MODEL_ID}, {REGION}), skills: "
             f"{[s.name for s in self.skills] or 'none'}")
+
+    def _compose(self, why: str, extra_findings: tuple[str, ...] = ()) -> None:
+        """Assemble the system prompt from whatever memory has handed over so far.
+
+        Called at boot with no card, and again the moment one arrives. That is the
+        design decision R1.1 had to make rather than the wiring it looks like:
+        `context.assemble` is a pure function of its arguments and the card is
+        **asynchronous**, so the alternative to re-assembling is a process whose prompt
+        is permanently the one it could build before memory_node published. Re-assembly
+        costs one string build, off the beat path and off the game's chant; not
+        re-assembling costs the profile for the life of the process.
+
+        The findings are logged and audited, never put in the prompt — `agent/context.py`
+        states the rule and this is the caller that has to obey it: telling the model
+        "your profile did not arrive" spends tokens teaching it about our plumbing and
+        invites it to talk about it.
+        """
+        assembly = context.assemble(self.constitution,
+                                    skills_index=loader.l1_index(self.skills),
+                                    card=self.card)
+        self.assembly = assembly
+        self.system_text = assembly.prompt
+        findings = tuple(assembly.findings) + tuple(extra_findings)
+        for finding in findings:
+            self.get_logger().warning(f"context: {finding}")
+        self._audit(assembly, findings)
+        self.get_logger().info(
+            f"system prompt composed ({why}): {len(assembly.prompt)} chars, blocks "
+            f"{assembly.blocks or 'none'}, {len(findings)} finding(s)")
+
+    def _audit(self, assembly: context.Assembly,
+               findings: tuple[str, ...]) -> None:
+        """Hand one composed-turn record to the single writer, over one topic hop.
+
+        This node holds no `Store` and must not: `memory/store.py` is the one writer,
+        and a second one would make the ordering of `audit.jsonl` a claim nobody
+        checks — while a gap in that file is indistinguishable from a deleted record,
+        which is the single ambiguity an audit log exists to remove. So the record goes
+        out on `/memory/audit` and memory_node appends it.
+
+        **`safety.guard.audit_record` is deliberately not on this path, and until this
+        PR three places said it was** (`context.audit_payload`'s docstring, the
+        `AUDIT_FIELDS` comment quoting it, and the `dormant_seams.tsv` row). It cannot
+        be: `store.check_audit` picks the declared field set by `kind`, this record's
+        row is `AUDIT_FIELDS["chat"] == ("blocks", "chars", "findings")`, and
+        `audit_record` stamps `kind="audit"` and mandates `action`/`decision`/`reason`
+        — none of which that row declares. Compose the two and the single writer
+        refuses the record at the append, in both directions: keep `kind="audit"` and
+        the three payload fields are undeclared, override it to `"chat"` and the three
+        mandated ones are. The field-set row is the authority; the docstring named a
+        consumer that cannot accept what it describes.
+        """
+        record = context.audit_payload(assembly, {"kind": "chat",
+                                                  "findings": list(findings)})
+        self.pub_audit.publish(String(data=json.dumps(
+            record, ensure_ascii=False, sort_keys=True)))
+
+    def on_profile(self, msg: String):
+        """Adopt the profile card and rebuild the prompt around it (latched topic).
+
+        Rejected wholesale on a malformed payload, the same shape as game_node's
+        `on_rps_table` and for the same reason: a half-parsed card is a set of facts
+        nobody wrote, and `profile.parse` already validates the version, the closed
+        predicate set and every field of every fact. The adoption is **outside** the
+        try on purpose, so a card that failed validation cannot become the card this
+        robot answers from — rejection leaves the card-less prompt this node already
+        had, which is the state it was in a moment ago.
+        """
+        try:
+            card = pf.parse(json.loads(msg.data), where=PROFILE_TOPIC)
+        except Exception as exc:                                    # noqa: BLE001
+            self.get_logger().error(
+                f"rejected profile card ({exc}) — this robot has no profile")
+            return
+        self.card = card
+        self._compose(f"card arrived: {len(card)} facts")
 
     def on_det(self, msg: String):
         self.scene = msg.data
@@ -172,6 +289,19 @@ class AgentNode(Node):
 
     def _converse(self, text: str):
         try:
+            if self.card is None:
+                # The decision R1.1 had to make, on the side that is visible
+                # afterwards. A turn that beats the card is **not** an error: the robot
+                # answers, because making a person wait for a latched topic is worse
+                # than answering without their profile. But it is a degraded turn, and
+                # a degraded turn has to be visible to the audit log rather than
+                # described to the model. This stops the moment the card lands, so the
+                # record count is bounded by boot order and not by how long anyone
+                # talks — one record per turn forever would be a per-turn cost with no
+                # reader.
+                self._audit(self.assembly, tuple(self.assembly.findings) + (
+                    f"this turn was composed before the profile card arrived on "
+                    f"{PROFILE_TOPIC}; the robot answered without the profile",))
             # history keeps TEXT only; the live camera frame is attached to the
             # CURRENT turn (true open-vocabulary vision — YOLO's COCO-80 can't
             # see pens/hats, Sonnet 5's eyes can)

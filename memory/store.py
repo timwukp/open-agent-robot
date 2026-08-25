@@ -194,13 +194,21 @@ AUDIT_FIELDS = {
     "audit": ("action", "audibility", "decision", "detail", "guard_decision",
               "interrupted", "latency_s", "reason", "span_index", "tag", "uid",
               "uninterruptible"),
-    # agent/context.py's `audit_payload`, which its own docstring describes as "the
-    # dict `agent_node` hands to `guard.audit_record` for a composed turn". Declared
-    # here although **nothing calls it yet** outside its test, and that is the reason
-    # rather than an oversight: this row is free to mandate exactly once, before the
-    # first record exists. Wire the call up first and the choice is already made — the
-    # composed-turn record would be refused at the append, and the cheapest way past a
-    # refusal is to widen the set to whatever the caller happens to pass.
+    # agent/context.py's `audit_payload`, published by agent_node on /memory/audit and
+    # appended by memory_node.on_audit — one hop, because the brain holds no Store.
+    # Declared here before that caller existed, and that was the reason rather than an
+    # oversight: this row is free to mandate exactly once, before the first record
+    # exists. Wire the call up first and the choice is already made — the composed-turn
+    # record would be refused at the append, and the cheapest way past a refusal is to
+    # widen the set to whatever the caller happens to pass.
+    #
+    # **This row is also what proved a docstring wrong.** Until R1.1 the comment here
+    # quoted `audit_payload`'s own claim that the record goes to `guard.audit_record`.
+    # It cannot: that function stamps `kind="audit"` and mandates
+    # `action`/`decision`/`reason`, none of which this row declares, so the composition
+    # is refused at the append in both directions. The row is the authority — see
+    # `check_audit`, which is the reader that decides — and the sentence describing the
+    # producer had followed the wrong consumer through three files.
     #
     # `chars` is `len(prompt)`, not the prompt: `Assembly.as_dict` deliberately keeps
     # the prompt out, and the prompt is the one field here that would contain the

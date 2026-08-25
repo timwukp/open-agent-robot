@@ -322,7 +322,22 @@ def assemble(constitution: str, *, skills_index: str = "",
 
 
 def audit_payload(assembly: Assembly, extra: Mapping[str, Any] | None = None) -> dict:
-    """The dict `agent_node` hands to `guard.audit_record` for a composed turn."""
+    """The composed-turn record `agent_node` hands to the single writer, kind `chat`.
+
+    **This docstring used to say "hands to `guard.audit_record`", and that consumer
+    cannot accept it.** `store.check_audit` selects the declared field set by `kind`;
+    this record's row is `AUDIT_FIELDS["chat"] == ("blocks", "chars", "findings")`,
+    while `guard.audit_record` stamps `kind="audit"` and mandates
+    `action`/`decision`/`reason`. Composing the two is refused at the append in both
+    directions — leave the stamped kind and these three fields are undeclared, override
+    it to `"chat"` and the three mandated ones are. `tests/test_profile_wiring.py`
+    asserts both refusals, so the sentence cannot drift back.
+
+    The caller therefore passes `{"kind": "chat"}` in `extra` and publishes the result on
+    `/memory/audit`, where memory_node appends it. Two things followed the wrong
+    sentence and are corrected in the same PR: the `AUDIT_FIELDS` comment that quoted it
+    and the `dormant_seams.tsv` row that quoted it as this seam's caller.
+    """
     out = assembly.as_dict()
     if extra:
         out.update(dict(extra))

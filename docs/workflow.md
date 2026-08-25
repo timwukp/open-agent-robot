@@ -237,16 +237,24 @@ One process writes to disk. Everything else sends a message. That is not tidines
 append-only stream's atomicity assumption breaks the moment a second writer exists, and
 the break is invisible until someone reads the file back.
 
-On the bus, `memory_node` publishes one thing and is owed two:
+On the bus, `memory_node` publishes one thing, receives one, and is still owed two:
 
 ```mermaid
 flowchart LR
   memory["memory_node<br/>memory/memory_node.py"] -->|"/memory/profile<br/>transient_local, once at boot"| late["every late subscriber<br/>gets it at subscribe time"]
-  late -.->|"pending"| agent["agent_node<br/>agent/agent_node.py"]
+  late -->|"R1.1"| agent["agent_node<br/>agent/agent_node.py"]
+  agent -->|"/memory/audit<br/>the composed turn, one hop"| memory
   memory -->|"/game/events_out"| face["browser face<br/>web/robot-view/index.html"]
   game["game_node<br/>game/game_node.py"] -.->|"/game/rps_round<br/>pending"| memory
   memory -.->|"/memory/rps_table<br/>pending, latched"| game
 ```
+
+**Why the brain's own audit record takes a topic hop.** `agent_node` composes the prompt
+and therefore knows what went into it, and it holds no `Store` — so it publishes the record
+on `/memory/audit` and the one writer appends it. A second writer would be the shorter
+edit and would make the order of `audit.jsonl` a claim nobody checks; worse, a gap in that
+file would become indistinguishable from a deleted record, which is the one thing the
+not-erasable stream exists to rule out.
 
 On disk, one writer owns five artifacts, and five retrieval paths read them:
 
@@ -284,11 +292,18 @@ turn.** The exemption is checked per path rather than inferred from position in 
 order, so moving `card` last would not break it — an invariant needs a line that creates
 it, not an ordering that implies it.
 
-**Three of the edges above are dashed, and two of them are one gap counted twice.**
+**Two of the edges above are still dashed, and they are one gap counted twice.**
 `game_node` hands each resolved round to the writer and subscribes latched for the
-accumulated table; `memory_node` has no subscriptions at all yet, so no round is persisted
-and the table starts empty every boot. `tests/test_architecture.py` asserts that pair stays
-paired, because wiring one end alone would look like progress and change nothing.
+accumulated table; neither end exists yet, so no round is persisted and the table starts
+empty every boot. `tests/test_architecture.py` asserts that pair stays paired, because
+wiring one end alone would look like progress and change nothing.
+
+The profile edge was dashed until R1.1. What closing it took was not a subscription: it
+was deciding what happens to a turn that arrives before the card does. `assemble` is pure
+and runs once at boot, while the card lands whenever `memory_node` starts, so the node
+re-composes the prompt on arrival and records the turns that ran without it. Answering
+without the profile is invisible in what the robot says, so it is visible in
+`audit.jsonl` or nowhere.
 
 ---
 

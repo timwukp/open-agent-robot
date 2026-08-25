@@ -81,20 +81,22 @@ T0 = 1000.0
 # trusted: `test_the_census_reads_every_producer` re-derives this set from the imports
 # and call sites on disk, because a name list is exactly what cannot notice a new name.
 PRODUCERS = ("memory/store.py", "memory/memory_node.py", "memory/erase.py",
-             "safety/guard.py", "safety/output_guard.py", "agent/context.py")
+             "safety/guard.py", "safety/output_guard.py", "agent/context.py",
+             "agent/agent_node.py")
 
 # Floor on the census. A walk that resolves zero call sites reports clean, and clean is
 # the same output as "every site is fine" — so the count is asserted, not just the
 # findings. Three is what is on disk today; the assertion is `>=`, because a new
-# producer must raise this number and never lower it silently.
-MIN_CENSUS_SITES = 3
+# producer must raise this number and never lower it silently. R1.1 raised it from 3 by
+# adding `memory_node.on_audit`.
+MIN_CENSUS_SITES = 4
 
 # The sites the census resolves but cannot read, each with the test that covers it
 # instead. This table is the reason the census is not allowed to just skip them.
 #
-# Measured, not assumed: of the three call sites on disk, exactly one passes a dict the
+# Measured, not assumed: of the four call sites on disk, exactly two pass a dict the
 # AST can read. That is a much weaker census than the walk suggests, and writing the
-# weakness down as data is what makes it fail — a fourth opaque site is a KeyError here
+# weakness down as data is what makes it fail — a third opaque site is a KeyError here
 # until someone either makes it visible or names where it is covered.
 OPAQUE_SITES = {
     # `delete` builds the tombstone in a local before appending it, so the argument is
@@ -105,16 +107,35 @@ OPAQUE_SITES = {
     ("memory/erase.py", "?"):
         "tests/test_erase.py::test_the_tombstone_names_ids_and_counts_and_"
         "quotes_no_deleted_text",
+    # R1.1: `memory_node.on_audit` appends a record that arrived over `/memory/audit` as
+    # JSON, so the argument is a Name whose fields no AST in this repo can know — they
+    # were decided in another process. Unreadable *by construction*, which is the point
+    # of the single writer: the fields are `agent_node`'s and the acceptance is
+    # `check_audit`'s, and the named test drives exactly that pair without ROS.
+    ("memory/memory_node.py", "?"):
+        "tests/test_profile_wiring.py::test_the_composed_turn_record_is_one_the_"
+        "single_writer_accepts",
 }
 
-# A producer the census cannot see at all: `agent/context.py` builds the payload and a
-# *caller* hands it to `audit_record`, so there is no audit call site in that file to
-# walk. Named here so the gap is data rather than an omission, with the test that
-# covers it by driving the builder directly.
+# Producers the census cannot see at all, because the record leaves the file by some
+# route other than an append. Named here so each gap is data rather than an omission,
+# with the test that covers it instead.
+#
+# Two distinct shapes, deliberately in one table rather than two: a second table with one
+# row is a category invented for a single member, and the rule both rows need is the same
+# one — name the coverage, and the coverage must exist.
 BUILDER_ONLY = {
+    # Builds the payload; a *caller* forwards it. No audit call site in the file at all.
     "agent/context.py":
         "tests/test_audit_schema.py::test_the_chat_payload_agent_node_will_hand_"
         "over_is_already_accepted",
+    # R1.1: builds the `chat` record and *publishes* it on `/memory/audit`, because the
+    # brain holds no `Store` — the append is `memory_node.on_audit`, in another process.
+    # So this file produces audit records and contains no append, which is not a gap in
+    # the census but the single-writer invariant showing up in it.
+    "agent/agent_node.py":
+        "tests/test_profile_wiring.py::test_the_composed_turn_record_is_one_the_"
+        "single_writer_accepts",
 }
 
 # Files that touch the audit stream in a role other than producing a record. Written

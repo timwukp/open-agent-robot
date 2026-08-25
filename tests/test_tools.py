@@ -35,7 +35,7 @@ from skills import loader                    # noqa: E402
 TOOLS_PY = REPO_ROOT / "agent" / "tools.py"
 AGENT_PY = REPO_ROOT / "agent" / "agent_node.py"
 
-ROS_CHANNELS = (tools.SAY, tools.GESTURE, tools.GAME_CMD, tools.INTERRUPT)
+ROS_CHANNELS = (tools.SAY, tools.GESTURE, tools.GAME_CMD, tools.INTERRUPT, tools.AUDIT)
 
 
 # --------------------------------------------------------------------- helpers
@@ -472,16 +472,23 @@ def _published_topics() -> set[str]:
 
     Written-down channel lists cannot notice a new publisher, which is the only
     change that matters here: a fifth topic is a fifth way out of the robot.
+
+    **This used to be its own parser and R1.1 proved it too narrow.** It read only
+    `ast.Constant` arguments and asserted one was present, so `create_publisher(String,
+    AUDIT_TOPIC, 10)` — a topic named by a module constant, the form `memory_node` has
+    always used — did not widen the census, it crashed it. Two ways past that were
+    available and only one is honest: skip non-literal arguments, which makes a new
+    egress channel invisible to the gate that exists to notice one; or resolve the
+    constant. `infra/ros_census.py` already resolves it, already *raises* on a form it
+    cannot resolve rather than narrowing itself silently, and is already the one reader of
+    this repo's topic graph. So this asks the census instead of holding a second resolver
+    that agrees with it until they differ.
     """
-    topics = set()
-    for node in ast.walk(ast.parse(AGENT_PY.read_text(encoding="utf-8"))):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "create_publisher"):
-            literals = [a.value for a in node.args
-                        if isinstance(a, ast.Constant) and isinstance(a.value, str)]
-            assert literals, f"a publisher with no literal topic at line {node.lineno}"
-            topics.update(literals)
-    return topics
+    sys.path.insert(0, str(REPO_ROOT / "infra"))
+    from ros_census import edges_in  # noqa: PLC0415
+    rel = str(AGENT_PY.relative_to(REPO_ROOT))
+    return {e.topic for e in edges_in(AGENT_PY.read_text(encoding="utf-8"), "agent", rel)
+            if e.kind == "pub"}
 
 
 def test_l5_the_census_covers_every_topic_the_agent_publishes_on() -> None:
