@@ -189,6 +189,96 @@ def test_the_start_time_parser_handles_the_ps_format() -> None:
         assert isinstance(datetime.strptime(stamp, "%a %b %d %H:%M:%S %Y"), datetime)
 
 
+# ------------------------------------------- T-J7 every named mutant is in layer L3
+# `docs/test-design.md` §3 says layer L3 is `pytest -m mutation`, and §0 rule 2 says
+# every assertion gets a named mutant plus one unmutated control per round. Both
+# sentences are only true if every test that applies a mutant carries the marker, and
+# nothing was checking that: two modules had drifted (10 cases in `test_guard.py`,
+# 9 in `test_game_wiring.py`) and `pytest -m mutation` silently ran neither. A round
+# that skips a mutant does not report a gap — it reports a pass.
+#
+# "Applies a mutant" is derived from the mechanism, not from a list of helper names:
+# a mutant applier is a function whose body rewrites source text (`.replace`) and then
+# turns the result back into a program (`importlib`, `ast.parse`, `compile`, `exec`).
+# The two appliers in this repo are called `load_mutant` and `mutate`; a hand-written
+# list of those two names could not notice the third name somebody invents next.
+_REVIVE = ("import_module", "spec_from_file_location", "module_from_spec",
+           "parse", "compile", "exec")
+
+
+def _mutant_appliers(tree: ast.Module) -> set[str]:
+    """Names of functions in this module that patch source text and re-run it."""
+    found = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        patches = revives = False
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr == "replace":
+                    patches = True
+                elif node.func.attr in _REVIVE:
+                    revives = True
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id in _REVIVE:
+                    revives = True
+        if patches and revives:
+            found.add(fn.name)
+    return found
+
+
+def _marks(fn: ast.FunctionDef) -> set[str]:
+    return {n.attr for dec in fn.decorator_list for n in ast.walk(dec)
+            if isinstance(n, ast.Attribute)}
+
+
+def _mutant_tests(tree: ast.Module, appliers: set[str]) -> list[ast.FunctionDef]:
+    out = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef) or not fn.name.startswith("test_"):
+            continue
+        calls = {n.func.id for n in ast.walk(fn)
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        if calls & appliers:
+            out.append(fn)
+    return out
+
+
+def test_the_applier_detector_is_not_vacuous() -> None:
+    """Both halves have to be required: a helper that only rewrites text is a string
+    utility, and one that only imports is a loader. Neither is a mutant applier."""
+    both = "def load(p, old, new):\n    return compile(p.read_text().replace(old, new))\n"
+    text_only = "def slug(s):\n    return s.replace(' ', '-')\n"
+    import_only = "def load(p):\n    return compile(p.read_text())\n"
+    assert _mutant_appliers(ast.parse(both)) == {"load"}
+    assert _mutant_appliers(ast.parse(text_only)) == set()
+    assert _mutant_appliers(ast.parse(import_only)) == set()
+
+
+def test_every_test_that_applies_a_mutant_runs_in_layer_l3() -> None:
+    unmarked, mutant_tests, files_with_appliers = [], 0, 0
+    for path in sorted(TESTS_DIR.glob("test_*.py")):
+        tree = ast.parse(path.read_text())
+        appliers = _mutant_appliers(tree)
+        if not appliers:
+            continue
+        files_with_appliers += 1
+        for fn in _mutant_tests(tree, appliers):
+            mutant_tests += 1
+            if "mutation" not in _marks(fn):
+                unmarked.append(f"{path.name}:{fn.lineno} {fn.name}")
+    # Floors, so that renaming an applier out of the detector's sight goes red instead
+    # of reporting a clean census of nothing (a scan that reads zero cases is an error,
+    # not a pass). Both numbers are asserted because they are two different claims.
+    assert files_with_appliers >= 4, (
+        f"only {files_with_appliers} modules look like they apply mutants — the "
+        f"detector has probably gone blind, which reads exactly like compliance")
+    assert mutant_tests >= 25, f"only {mutant_tests} mutant tests found"
+    assert not unmarked, (
+        "these tests apply a mutant but are not selected by `pytest -m mutation`, "
+        f"so layer L3 does not actually run them: {unmarked}")
+
+
 # ---------------------------------------------------------------- suite plumbing
 def test_pytest_ini_points_at_the_tests_directory() -> None:
     ini = (REPO_ROOT / "pytest.ini").read_text()

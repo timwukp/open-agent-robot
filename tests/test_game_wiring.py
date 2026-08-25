@@ -526,6 +526,7 @@ def mutate(old: str, new: str) -> tuple[ast.Module, dict[str, ast.FunctionDef]]:
     return parse(NODE_SRC.replace(old, new, 1))
 
 
+@pytest.mark.mutation
 def test_unmutated_control():
     """Round-level control (§6.0 rule 2): with no substitution applied, every check
     below must report the healthy value. A harness that reported failure for all
@@ -542,6 +543,7 @@ def test_unmutated_control():
     assert not disk_calls(methods)
 
 
+@pytest.mark.mutation
 def test_mutant_inference_on_the_beat_path():
     """MUTANT: consult the model inside `on_tts_started` (the chant callback)."""
     _, methods = mutate(
@@ -553,6 +555,7 @@ def test_mutant_inference_on_the_beat_path():
         "the beat path reached the model and the leak check did not notice"
 
 
+@pytest.mark.mutation
 def test_mutant_model_trained_before_the_person_is_answered():
     """MUTANT: `_learn` moves above the result clip and the banter request."""
     _, methods = mutate(
@@ -563,6 +566,7 @@ def test_mutant_model_trained_before_the_person_is_answered():
         f"ordering check accepted {order}, so it does not constrain the order"
 
 
+@pytest.mark.mutation
 def test_mutant_judge_polarity_swapped():
     """MUTANT: unpack judge() the other way round — the robot celebrates its losses."""
     _, methods = mutate("        _user_outcome, outcome = rps.judge(",
@@ -571,6 +575,7 @@ def test_mutant_judge_polarity_swapped():
         "the polarity check cannot tell the two views apart"
 
 
+@pytest.mark.mutation
 def test_mutant_second_outcome_table_reintroduced():
     """MUTANT: bring back `WINS`, a second encoding of the same 3x3 invariant."""
     tree, _ = mutate(
@@ -581,6 +586,7 @@ def test_mutant_second_outcome_table_reintroduced():
         "a module-level move table was reintroduced and the census did not see it"
 
 
+@pytest.mark.mutation
 def test_mutant_arm_fallback_asks_the_broken_object():
     """MUTANT: the coin becomes `self.opponent.uniform_move()`."""
     _, methods = mutate("return random.choice(list(opp.MOVES))",
@@ -589,6 +595,7 @@ def test_mutant_arm_fallback_asks_the_broken_object():
         "the fallback now asks the object that just raised and the check allowed it"
 
 
+@pytest.mark.mutation
 def test_mutant_restored_model_adopted_before_validation():
     """MUTANT: install the deserialised model inside the try block."""
     _, methods = mutate(
@@ -598,6 +605,7 @@ def test_mutant_restored_model_adopted_before_validation():
         "the model is installed mid-validation and the check did not notice"
 
 
+@pytest.mark.mutation
 def test_mutant_table_subscription_loses_the_latched_profile():
     """MUTANT: default (volatile) QoS on the state topic — a table published before
     this node starts is then never delivered, and the node silently plays the coin
@@ -608,6 +616,7 @@ def test_mutant_table_subscription_loses_the_latched_profile():
         "the QoS check reads something other than the argument actually passed"
 
 
+@pytest.mark.mutation
 def test_mutant_second_writer_in_the_game_node():
     """MUTANT: `_learn` writes the model file itself, breaking the single writer."""
     _, methods = mutate(
