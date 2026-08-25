@@ -80,6 +80,59 @@ SYNTHETIC_KEY = "synthetic"
 PAYLOAD_KEYS = frozenset({"id", "dur_s", "t_us", SYNTHETIC_KEY, "engine", "voice"})
 
 
+# ------------------------------------------------- utterance ids as a privilege
+# `id` is not a label. `tts_node` reads it to decide whether `/speech/interrupt`
+# may stop an utterance, so an id from the reserved set below is a **privilege**:
+# it exempts speech from the stop reflex and from S7's output guard, which are the
+# two things that can shut this robot up.
+#
+# The privilege used to be reachable from model output, and the census that found
+# it is test item T-G3 ("who can publish id == 'chant'"). `tts_node` computed
+# `uid = req.get("id", text[:24])`, and `agent/agent_node.py` publishes
+# `{"text": spoken}` with no id at all — so a reply consisting of exactly the five
+# characters `chant` became an utterance the robot could not be interrupted out of.
+# Nobody would write that request; the model writes the text.
+#
+# The fix is that the fallback id is **constructed** rather than **given**:
+# `request_id` builds it with a prefix, so the fallback namespace and the reserved
+# namespace are disjoint and free text cannot land in the second one. Note the
+# prefix is not the gate — the gate is membership in `UNINTERRUPTIBLE_IDS`, which
+# is written out (a prefix test as a gate is the S4.5 mistake, where the failure
+# mode is accepting one name too many). Here the prefix is doing the opposite job:
+# it makes one namespace unreachable from the other. An id that is *given* is still
+# trusted, and what keeps that honest is a census over every production file
+# asserting that only `game/game_node.py` passes a literal reserved id.
+UNINTERRUPTIBLE_IDS = frozenset({"chant"})
+FALLBACK_ID_PREFIX = "say:"
+FALLBACK_ID_TEXT_CHARS = 20
+
+
+def request_id(req: dict) -> str:
+    """The utterance id for one `/speech/say` request. The only creator.
+
+    A single creator rather than a `req.get("id", …)` at each reader, because the
+    default is the whole question: two readers with two defaults are two answers to
+    "is this utterance interruptible", and the disagreement is invisible until the
+    day somebody needs the robot to stop.
+    """
+    uid = req.get("id")
+    if uid:
+        return str(uid)
+    return FALLBACK_ID_PREFIX + str(req.get("text", ""))[:FALLBACK_ID_TEXT_CHARS]
+
+
+def interruptible(uid: str) -> bool:
+    """Whether `/speech/interrupt` may abandon this utterance.
+
+    False only for the game chant: the beat is what the person's hand is timing
+    against, so cutting it mid-count produces a round nobody can play. That
+    exemption is also a hole, which is why S7's guard reports a blocked
+    uninterruptible utterance as a finding instead of silently doing nothing —
+    see safety/output_guard.py.
+    """
+    return uid not in UNINTERRUPTIBLE_IDS
+
+
 def engine_for(text: str) -> Engine:
     """The engine that will speak `text`.
 

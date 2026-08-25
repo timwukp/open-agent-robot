@@ -32,12 +32,12 @@ import sys
 from pathlib import Path
 
 import pytest
+import say_payload
 
 from safety import disclosure, guard
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATEWAY = REPO_ROOT / "gateway" / "ws_gateway.py"
-TTS_NODE = REPO_ROOT / "speech" / "tts_node.py"
 INDEX_HTML = REPO_ROOT / "web" / "robot-view" / "index.html"
 CONSTITUTION = REPO_ROOT / "safety" / "constitution.md"
 
@@ -101,36 +101,71 @@ def test_the_chinese_sentence_is_spoken_first() -> None:
 # ------------------------------------------------- the request shape tts_node accepts
 
 
-def _request_keys_tts_node_reads() -> set[str]:
-    """Derive the accepted `/speech/say` keys from tts_node's own source.
-
-    Written-down interface lists go stale in the direction that matters: a key the
-    node stopped reading still looks supported. This reads every `req["k"]` and
-    `req.get("k")` in the node instead.
-    """
-    tree = ast.parse(TTS_NODE.read_text(encoding="utf-8"))
-    keys: set[str] = set()
-    for n in ast.walk(tree):
-        if (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
-                and n.value.id == "req" and isinstance(n.slice, ast.Constant)):
-            keys.add(n.slice.value)
-        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                and n.func.attr == "get" and isinstance(n.func.value, ast.Name)
-                and n.func.value.id == "req" and n.args
-                and isinstance(n.args[0], ast.Constant)):
-            keys.add(n.args[0].value)
-    return keys
-
-
 def test_the_derived_request_key_census_is_not_empty() -> None:
     """A scan that finds nothing would make the subset assertion below vacuous."""
-    keys = _request_keys_tts_node_reads()
+    keys = say_payload.say_payload_keys()
     assert "text" in keys, keys
     assert len(keys) >= 3, keys
 
 
+def test_the_census_reaches_every_reader_of_the_payload() -> None:
+    """The failure the previous census could not report.
+
+    S7 moved the `id` default out of the node into `speech/voices.py:request_id()`.
+    Nothing about the accepted format changed, but a census that walked one file
+    started deriving `{"cache", "text"}` — an interface key going missing looks
+    exactly like an interface key being removed. So the reader set is derived from the
+    node's imports, and this asserts that the derivation still lands on more than the
+    node itself and that each reader it finds contributes at least one key.
+    """
+    by_reader = say_payload.request_keys_by_reader()
+    entry = say_payload.SAY_ENTRY.resolve()
+    assert entry in by_reader, sorted(p.name for p in by_reader)
+    contributing = {p: k for p, k in by_reader.items() if k}
+    assert len(contributing) >= 2, (
+        "the payload census reaches only "
+        f"{sorted(p.name for p in contributing)}; a delegated reader has become "
+        "invisible to it, which shrinks the key set every other assertion here is "
+        "checked against")
+    assert by_reader[entry], "the entry node itself reads no request key"
+
+
+def test_the_census_follows_a_delegation_on_a_constructed_case(tmp_path: Path) -> None:
+    """The positive control for the fix above, on a tree whose answer is known.
+
+    Two files today and two readers today is a coincidence a test cannot tell apart
+    from a working traversal; a census hard-wired to a pair of paths would also be
+    green. So the machinery is run over a synthetic entry module that delegates twice,
+    and the key only reachable through the second hop has to appear. The negative half
+    matters as much: a module that is *not* imported must not contribute, or the
+    census would be scanning the tree instead of the call path and every unrelated
+    `req["…"]` in the repo would widen the accepted format.
+    """
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "entry.py").write_text(
+        "from pkg import mid\n"
+        "def speak(req):\n"
+        "    return req['text']\n", encoding="utf-8")
+    (tmp_path / "pkg" / "mid.py").write_text(
+        "from pkg import leaf\n"
+        "def route(req):\n"
+        "    return req.get('cache')\n", encoding="utf-8")
+    (tmp_path / "pkg" / "leaf.py").write_text(
+        "def ident(req):\n"
+        "    return req.get('id')\n", encoding="utf-8")
+    (tmp_path / "pkg" / "stranger.py").write_text(
+        "def gain(req):\n"
+        "    return req['volume']\n", encoding="utf-8")
+
+    entry = tmp_path / "pkg" / "entry.py"
+    keys = say_payload.say_payload_keys(entry, tmp_path)
+    assert keys == {"text", "cache", "id"}, sorted(keys)
+    assert "volume" not in keys, "an unimported module is not a reader of the payload"
+    assert len(say_payload.say_payload_readers(entry, tmp_path)) == 3
+
+
 def test_every_utterance_uses_only_keys_tts_node_reads() -> None:
-    keys = _request_keys_tts_node_reads()
+    keys = say_payload.say_payload_keys()
     for u in disclosure.UTTERANCES:
         assert set(u) <= keys, f"{sorted(set(u) - keys)} would be silently ignored"
 

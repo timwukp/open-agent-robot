@@ -11,8 +11,11 @@ Publishes  /robot/mouth       UInt8MultiArray 24 kHz mono s16 chunks (burst per 
 Design: a worker thread consumes a queue; the rclpy executor stays free so the
 interrupt callback is never blocked by a long story. Kokoro's KPipeline yields
 per-sentence audio — each sentence is burst as soon as it's synthesized, so the
-first sentence is audible in <1.5 s even for long replies. The game chant
-(id=="chant") is exempt from interruption (the beat is sacred).
+first sentence is audible in <1.5 s even for long replies. The game chant is
+exempt from interruption (the beat is sacred); which ids carry that exemption, and
+the id a request without one gets, are both `speech/voices.py`'s decision — this
+node must not compute either, because the fallback id is what let model output
+claim the exemption for itself (T-G3).
 
 Engine selection and the started payload both live in `speech/voices.py`, which
 has no ROS or numpy import, so the Art 50(2) marking is testable on a laptop and
@@ -160,8 +163,11 @@ class TtsNode(Node):
 
     def speak(self, req: dict):
         text = req["text"]
-        uid = req.get("id", text[:24])
-        interruptible = uid != "chant"      # the game beat is never preempted
+        # Both from voices.py, which owns the id namespace: a reply of exactly
+        # "chant" used to fall through `req.get("id", text[:24])` and exempt itself
+        # from every interrupt this robot has (T-G3).
+        uid = voices.request_id(req)
+        interruptible = voices.interruptible(uid)
         t0 = time.monotonic()
         sent_s = 0.0                        # audio seconds already burst
 
