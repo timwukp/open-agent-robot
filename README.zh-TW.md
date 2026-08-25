@@ -45,6 +45,7 @@ web/robot-view/  (瀏覽器)                 │      ├─ perception/ hand_no
 | 對手模型 | `game/opponent.py` | order-2..4 條件轉移表,鍵在**使用者自己的**(手勢, 勝負)歷史——絕不鍵在機器人的出拳,那等於給反學習者一根槓桿去操縱「它被預測時所用的那個 context」。只在**anytime-valid e-value 閘**(Ville,δ = 0.05 是單一對手的**終身**誤開上界)判定這個人確實離開均勻時才利用,否則出公平的 1/3 硬幣。**已接進 `game_node`**:每局結果 fire-and-forget 發到 `/game/rps_round`,讓 `memory_node` 維持成唯一會寫盤的行程;累積表在啟動時由 **latched** topic 送回來,還原失敗的狀態一律整份拒絕而不做部分合併。`memory_node` 在 S3 已經存在,但目前只發佈檔案卡、還沒訂閱 `/game/rps_round`,所以今天沒有任何節點還原那張表:表每次開機都是空的,前 ~120 局實際上退回 1/3 硬幣(81 個 order-2 桶不可能被一場 20 局的 session 填滿——這是算術,不是調參選擇) |
 | 憲法 | `safety/constitution.md`、`safety/guard.py` | 十條編號條文,以**執行期資料**而不是說明文件的身分出貨:任何已登記的條文 id 從檔案裡消失,載入器就拒絕啟動 —— 少一條邊界不是文件問題。系統提示由兩個函式各自組好、只串接一次:指令區(基礎提示 + 憲法)在前,加柵欄的資料區塊在後;而 `instruction_region()` 會**拒絕**任何帶柵欄標記或資料前言的參數,所以召回的文字沒辦法被夾帶進模型讀作規則的那一區。上限:口說 600 字、60 回合、3600 秒,手勢只能來自 `body/gestures.py` 那一份白名單 |
 | 檔案卡 | `memory/profile.py`、`memory/memory_node.py` | ~17 條手寫事實,落在**封閉謂詞集**裡,開機時以 `transient_local` 在 `/memory/profile` 發佈一次,所以後啟動的節點不用往返也拿得到。它是**唯讀種子直到 S5**,而那個鎖放在單寫者裡(`store.PROTECTED_SNAPSHOTS`),不放在這個模組:寫入 API 是 `Store.write_snapshot`,一個只是「自己不去呼叫」的讀取端只約束得到經過它的那些呼叫者。`unlock_for_s5()` 是唯一具名的通道。鎖的理由是來源可追:語義事實必須指名它來自哪些 episode,刪除 episode 才能連帶刪掉它產生的東西,而 S4 之前根本沒有 episode——現在寫進去的事實會是任何刪除都到不了的事實。350 token 的常駐預算在開機時對**真實那張卡**執行,不只是對 repo 附的示例斷言;超預算讓節點開機失敗而不是印一行警告:它是**每回合都要付、付到行程結束**的成本 |
+| salience | `memory/salience.py` | 一個 turn 值不值得記住:`0.4·明示評價 + 0.3·新穎度 + 0.2·被要求記住 + 0.1·長度`,四項全部只由**文字與意圖**算出。音高、音量、語速在 EU AI Act Art 3(34) 下都是行為特徵,而 Art 3(40) 的窄門只給 categorisation、不給情緒辨識——一個韻律項會讓每一條被記住的話都變成生物特徵推論的產物。那一項存在但**預設關閉**:一個沒有任何代碼路徑到得了的項,是一個沒有任何測試能證明它被排除的項,所以**開關開啟**那一次執行是正控,它證明那些聲學欄位本來讀得到。0.4 那一項問的是「有沒有做出評價」,從不問極性:「我討厭芫茜」跟「我最愛芫茜」一樣值得記住,而不需要極性正好讓情緒模型進不了這個系統。排在 S4 之前才是重點——一個存下來的分數只跟同一個公式產出的分數可比,所以 `FORMULA` 跟著每個值走,而 `Store.append` 拒絕一個沒帶著它的分數 |
 | 記憶寫者 | `memory/store.py` | `memory_node` 背後的單寫者 append-only 日誌。一條寫者執行緒同時服務 `events` 與 `audit` 兩個 stream —— 同一個保留期、同一條級聯刪除路徑,所以它們不可能互相不一致。序號在鎖內取得、以**高水位**發佈(一批可能倒序入列);序列化失敗的記錄被拒絕但**不消耗序號**;快照用 `os.replace` 換名,所以持有舊檔的讀者繼續讀到完整位元組;寫者執行緒死掉時 `flush()` 拋錯而不是無限等待 |
 | 身體 | `body/body_node.py` | MuJoCo 運動學木偶(Dex3-1 三指手:拇指 3 自由度、食指 2、中指 2,單手 7 個),以 MJPEG 串到瀏覽器 |
 | 傳輸 | `daemon/main.c`、`gateway/ws_gateway.py` | 單一 WebSocket、二進位分幀;音訊優先於視訊,兩者都有流控 |
@@ -84,8 +85,8 @@ open web/robot-view/index.html
 | `speech/`、`perception/`、`agent/`、`game/`、`body/`、`gateway/` | ROS 2 節點,一個節點一個關注點 |
 | `web/robot-view/` | 單頁「臉」:MJPEG 身體視圖 + 事件 HUD |
 | `skills/` | Markdown 技能,以及替它們把關的加載器。見 [`skills/README.md`](skills/README.md) |
-| `safety/`、`memory/` | 憲法與單寫者儲存層 —— 純模組、零 ROS,所以它們的測試在筆電上就跑得完 |
-| `tests/` | 離線測試 705 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
+| `safety/`、`memory/` | 憲法、單寫者儲存層與 salience 公式 —— 純模組、零 ROS,所以它們的測試在筆電上就跑得完 |
+| `tests/` | 離線測試 775 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
 | `infra/` | 開機供裝、環境安裝、行程監管(`run_ec2.sh` 用 pid 檔,**絕不**用 `pkill` 樣式) |
 | `docs/` | 設計記錄:七輪研究(原始證據在 `docs/evidence/`)、day-0 延遲量測、demo 手冊、記憶與安全的設計批判,以及[測試契約](docs/test-design.md) |
 
@@ -94,7 +95,7 @@ open web/robot-view/index.html
 ```bash
 pytest -m "not mutation"   # 每次存檔跑
 pytest                     # 每個 PR 跑:加上具名突變體
-pytest -m mutation         # 只跑突變體(2026-08-23 量到 136 個案例)
+pytest -m mutation         # 只跑突變體(2026-08-23 量到 150 個案例)
 infra/check_deploy.sh      # repo 裡的每個節點,runner 真的會啟動它嗎?
 ```
 

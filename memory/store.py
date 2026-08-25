@@ -56,6 +56,21 @@ class ReadOnlyError(StoreError):
 # everything written here is personal data with a retention period attached.
 STREAMS = ("events", "audit")
 
+# Record fields that are meaningless without a companion field (plan §S3.5).
+#
+# `salience` is a number produced by a formula, and the same number from a different
+# formula is a different quantity. A score written without its producer's id is a
+# value nothing can ever compare: when S6 changes the weights, "these two records
+# disagree" and "these two records are not the same measurement" become the same
+# observation, and no gate can tell them apart afterwards because the information was
+# never written down. Refusing the record is the only point at which that is fixable.
+#
+# Declared as data rather than by importing `memory.salience`: the one writer must not
+# acquire a dependency on every module that derives a field, and the *value* of the id
+# belongs to the module that computes it — `tests/test_salience.py` asserts there is
+# exactly one creator of it, the same way `PREDICATES` has exactly one.
+RECORD_FIELD_DEPS = {"salience": "salience_formula"}
+
 # Snapshot names nothing in this repo may write yet (design item T-A5).
 #
 # This is the read-only guarantee for the S3 profile card, and it is *here* rather
@@ -222,6 +237,14 @@ class Store:
                 raise StoreError(
                     f"{reserved!r} is set by the store; a caller-supplied value "
                     "would make the ordering of the file a claim nobody checks")
+        # Before `_raise_if_failed`, like the snapshot lock and for the same reason: a
+        # record refused for what it contains must not be reported as a broken disk.
+        for field, companion in sorted(RECORD_FIELD_DEPS.items()):
+            if field in record and companion not in record:
+                raise StoreError(
+                    f"a record carrying {field!r} must also carry {companion!r}: a "
+                    f"derived value with no record of what produced it cannot be "
+                    f"compared with the next one — use memory.salience.stamp()")
         self._raise_if_failed()
         # Everything that can fail happens **before** a sequence number is taken,
         # and it costs a second `json.dumps` to arrange. Two reasons, both worth the

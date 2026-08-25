@@ -1,6 +1,8 @@
-100755 .push/push_branch.py
-100644 tests/test_push_branch.py
+100644 memory/salience.py
+100644 memory/store.py
+100644 tests/test_salience.py
 100644 docs/test-design.md
 100644 README.md
 100644 README.zh-TW.md
 100644 .push/files.txt
+100755 .push/push_branch.py
