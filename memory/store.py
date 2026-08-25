@@ -156,11 +156,90 @@ WHY_REQUIRED = {"events": True, "audit": False}
 #
 # `audit` is not, and this is the one place that decision can be enforced: an audit
 # log the deletion path can rewrite is not an audit log, because the record that a
-# deletion happened would be removable by the next deletion. The consequence is
-# stated rather than hidden — see `memory/erase.py`'s `RETAINED`: the audit stream is
-# outside the erasure, so audit records must not quote user text, and today nothing
-# enforces that. That gap is reported by every receipt instead of being implied away.
+# deletion happened would be removable by the next deletion. The consequence used to
+# be stated and left open here — see `memory/erase.py`'s `RETAINED` — because nothing
+# enforced that an audit record omits user text. `AUDIT_FIELDS` below closes it.
 REWRITABLE = {"events": True, "audit": False}
+
+# What an `audit` record may contain, per record kind (closes the gap `REWRITABLE`
+# names above; plan §3 S2's audit obligation and T-C4's "no trace of E").
+#
+# The argument is `REWRITABLE["audit"] is False`: this is the one stream a deletion
+# cannot rewrite, so whatever an audit record carries is a copy that outlives every
+# future erasure. `memory/erase.py` already closed `TOMBSTONE_FIELDS` for exactly
+# that reason — but only for tombstones, and only on the read side, which covered one
+# of the three producers. The other two were open: `memory_node` writes
+# `profile_loaded`, and `safety/guard.audit_record` takes arbitrary `**fields` while
+# its own docstring asserted that "the same cascade-delete path that covers `events`
+# covers this stream". That premise is false, and it is the more dangerous half of
+# the defect: a comment inviting the next writer to pass the text.
+#
+# Declared per kind with **no default**, so a new audit kind is refused until someone
+# writes down what it may carry. The timing is the point and it is the same argument
+# as `WHY_REQUIRED`: a field set is only free to mandate before the first writer
+# exists, and a default either way — open or closed — is the decision nobody made.
+#
+# Fields no row lists because they are the store's, not a kind's. `kind` selects the
+# row; `seq` and `ts` are stamped by the writer and refused from callers above; and
+# `why` is governed by `check_why` and `WHY_REQUIRED` — a per-kind copy of that
+# decision would be a second reader of one format, free to drift from the first.
+AUDIT_IMPLICIT_FIELDS = ("kind", "seq", "ts", "why")
+
+AUDIT_FIELDS = {
+    # safety/guard.audit_record, written by safety/output_guard.py
+    # `tag` is the rejected gesture tag and it is declared on purpose: the `\w+`
+    # regex that produces it admits no spaces and no punctuation, so it cannot be an
+    # utterance, and "which tag was refused" is the one thing that record exists to
+    # say. `utterance` is deliberately absent — see check_audit.
+    "audit": ("action", "audibility", "decision", "detail", "guard_decision",
+              "interrupted", "latency_s", "reason", "span_index", "tag", "uid",
+              "uninterruptible"),
+    # agent/context.py's `audit_payload`, which its own docstring describes as "the
+    # dict `agent_node` hands to `guard.audit_record` for a composed turn". Declared
+    # here although **nothing calls it yet** outside its test, and that is the reason
+    # rather than an oversight: this row is free to mandate exactly once, before the
+    # first record exists. Wire the call up first and the choice is already made — the
+    # composed-turn record would be refused at the append, and the cheapest way past a
+    # refusal is to widen the set to whatever the caller happens to pass.
+    #
+    # `chars` is `len(prompt)`, not the prompt: `Assembly.as_dict` deliberately keeps
+    # the prompt out, and the prompt is the one field here that would contain the
+    # utterance. `blocks` and `findings` are block *names* and our own finding strings
+    # from `context._put`, neither of which is quoted input.
+    "chat": ("blocks", "chars", "findings"),
+    # memory/memory_node.py, at card load
+    "profile_loaded": ("facts", "kinds", "locked"),
+    # memory/erase.py. `TOMBSTONE_FIELDS` is the read-side twin: it lists the
+    # *complete* on-disk field set, so it equals this row plus the implicit ones, and
+    # `tests/test_audit_schema.py` asserts that equality rather than trusting it.
+    "tombstone": ("episode", "removed"),
+}
+
+# Longest string any audit record may carry, per field.
+#
+# The field-set closure above stops a *new* field from arriving. It does not bound
+# the fields already declared, and one of them is not ours: `detail` is set from the
+# classifier's own error message (`safety/output_guard.py`), so its content comes from
+# upstream and has no length its author controls. An unbounded upstream string in the
+# one unerasable stream is the same failure as a quoted utterance, reached by a
+# different route.
+#
+# Stated honestly, because the number is the whole claim: this bounds *how much*
+# outlives a deletion. It does not make the record text-free, and it cannot — no
+# check on a string's value can tell prose we wrote from prose someone said. That
+# distinction is provenance, not content, and it is checked where provenance lives:
+# `tests/test_audit_schema.py` walks the call sites.
+#
+# Second limit, and this one is a shape rather than a judgement: the check below reads
+# the record's own values, so it bounds a *top-level* string and not a string inside a
+# list or dict. Every container-valued declared field today holds machine-generated
+# content — `removed` is sequence numbers, `blocks` is block names, `kinds` is a count
+# — and a tombstone's `removed` is legitimately large, so a blanket recursive size
+# bound would refuse a correct deletion receipt. Walking containers is therefore a
+# separate change with its own mutant, and until it lands the guarantee is: no
+# declared *string* field exceeds this, and no declared container field is fed from
+# user input at any site `tests/test_audit_schema.py`'s census can see.
+AUDIT_TEXT_CEILING = 500
 
 # Record fields that are meaningless without a companion field (plan §S3.5).
 #
@@ -382,6 +461,60 @@ def check_why(why) -> str:
     return goal
 
 
+def check_audit(record) -> str:
+    """Validate an `audit` record's contents and return its kind.
+
+    A function rather than a method, for the same reason `check_why` is one: the
+    producer can check the record it is about to claim without holding the writer,
+    and `memory/erase.py` already does that with `parse_tombstone` before appending.
+
+    Both directions matter and they fail differently. An undeclared *field* is the
+    "helpful excerpt" case: someone adds `text` to make a receipt readable, and
+    because `REWRITABLE['audit']` is False that text is now the one copy of a deleted
+    utterance no deletion can reach. An undeclared *kind* is the case a default would
+    have swallowed: a new producer inherits either a closed set that does not describe
+    it, or an open one — and an open default is how the first writer of a kind gets to
+    decide the schema by accident.
+    """
+    if not isinstance(record, dict):
+        raise StoreError(f"an audit record must be a dict, got "
+                         f"{type(record).__name__}")
+    kind = record.get("kind")
+    if not isinstance(kind, str) or not kind:
+        raise StoreError(
+            f"audit record has no usable 'kind' ({kind!r}): the field set is per kind, "
+            "so a record without one cannot be checked at all, and an unchecked audit "
+            "record is exactly the copy that outlives every deletion")
+    if kind not in AUDIT_FIELDS:
+        raise StoreError(
+            f"unknown audit kind {kind!r}: the kinds are {tuple(AUDIT_FIELDS)}. "
+            "A new kind has to write down what it may carry before its first record "
+            "exists — audit.jsonl is not erasable, so a field set chosen afterwards "
+            "cannot be applied to what is already on disk")
+    allowed = AUDIT_FIELDS[kind]
+    # Named `undeclared`, not `unknown`: `check_why` below already owns the line
+    # `if unknown:` and T-J4's mutants anchor on that exact text, so a second copy
+    # here makes the anchor ambiguous and the harness refuses to build the mutant.
+    # The distinct name is also the more accurate one — an undeclared field on a
+    # known kind is a different refusal from an unknown goal.
+    undeclared = sorted(set(record) - set(AUDIT_IMPLICIT_FIELDS) - set(allowed))
+    if undeclared:
+        raise StoreError(
+            f"audit record of kind {kind!r} carries undeclared field(s) {undeclared}: "
+            f"audit.jsonl is outside the erasure (memory.store.REWRITABLE), so "
+            f"anything here outlives every future deletion. The fields are {allowed}")
+    for field in sorted(allowed):
+        value = record.get(field)
+        if isinstance(value, str) and len(value) > AUDIT_TEXT_CEILING:
+            raise StoreError(
+                f"audit record of kind {kind!r} has {field!r} at {len(value)} chars, "
+                f"over AUDIT_TEXT_CEILING={AUDIT_TEXT_CEILING}. Not every declared "
+                "field's content is ours — 'detail' comes from the classifier — and "
+                "an unbounded upstream string in the one unerasable stream is a "
+                "quoted utterance reached by another route")
+    return kind
+
+
 def goal_of(record: dict) -> str:
     """The validated goal of one record read back off disk.
 
@@ -514,6 +647,14 @@ class Store:
                 f"stream {stream!r} is in STREAMS but not in WHY_REQUIRED: a new "
                 "stream has to decide whether a reason is mandatory, and a default "
                 "either way is the decision nobody made")
+        # Same placement and both of the same reasons as the checks above: a record
+        # refused for what it contains must not be reported as a broken disk, and a
+        # refusal must not consume a sequence number. The second one carries extra
+        # weight here — a gap in `audit.jsonl` is indistinguishable from a deleted
+        # record, which is the single ambiguity this stream exists to remove, so the
+        # check that protects the audit log must not be able to dent it.
+        if stream == "audit":
+            check_audit(record)
         if "why" in record:
             check_why(record["why"])
         elif WHY_REQUIRED[stream]:

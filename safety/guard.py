@@ -440,10 +440,21 @@ AUDIT_DECISIONS = ("allowed", "modified", "blocked", "recorded")
 def audit_record(action: str, decision: str, reason: str, **fields) -> dict:
     """One audit-log record, for `Store.append("audit", ...)`.
 
-    The record carries the text that triggered it when the caller passes one. An
-    audit log that cannot say what was said cannot answer the question it exists to
-    answer, and the same retention period and cascade-delete path that cover
-    `events` cover this stream — that is why they share one writer.
+    **This record must not carry what was said, and the previous version of this
+    docstring said the opposite.** It claimed "the same retention period and
+    cascade-delete path that cover `events` cover this stream", which is false:
+    `memory.store.REWRITABLE["audit"]` is `False` and `memory.erase.RETAINED` lists
+    `audit.jsonl` as outside the erasure. Sharing one writer is why the *ordering* is
+    safe, not why the content is erasable. Under that false premise every `**fields`
+    a caller passes is permanent, so "forget what I said" could not reach it — and the
+    invitation to pass the text was the defect, not any line of code.
+
+    So the field set is closed per kind in `memory.store.AUDIT_FIELDS`, which is the
+    authority; this constructor deliberately does not restate it. Two parsers of one
+    format drift, and the one that runs last is the one that matters — the store is
+    the only writer, so a record this function is willing to build and the store is
+    not willing to write raises at the append. `tests/test_audit_schema.py` asserts
+    the two agree, so that refusal is a test failure rather than a runtime surprise.
     """
     if action not in AUDIT_ACTIONS:
         raise GuardError(f"unknown audit action {action!r}; the actions are "
