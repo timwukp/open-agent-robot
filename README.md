@@ -203,9 +203,23 @@ to be derived. Nothing about that was visible in review; the mutant found it.
 
 ## Design record
 
-The `docs/` directory is the interesting part of this repository. It keeps the
-research and the argument, not just the conclusion — including the findings that
-went **against** intuition:
+**Start here, and only here, for "what is the design":** [`docs/design.md`](docs/design.md)
+is the single authoritative statement of it — the five promises and which layer each one
+actually reaches, the System 1 / System 2 split and the measurement that forced it, the
+closed list of invariants with the test that goes red for each, and what this project
+deliberately does not build. That last section separates **refuted**, **deferred with named
+preconditions** and **not evaluated**, because a document that writes all three as "we don't
+do X" tells the next reader the evidence is settled when it is not. The schedule is
+[`docs/plan.md`](docs/plan.md); the test contract is
+[`docs/test-design.md`](docs/test-design.md). Which document supersedes or partly overturns
+which will be recorded in `docs/INDEX.md`, which lands in the next PR
+([`docs/plan.md`](docs/plan.md) §3).
+
+The rest of `docs/` is the **evidence**, kept verbatim rather than summarised into the
+conclusion — including the findings that went **against** intuition. Read a round for how a
+number was obtained, not for what the design currently is; some of these recommendations
+have since been overturned, and `docs/design.md` §4.4 names the citations that must no
+longer be quoted at all:
 
 - [`docs/day0-measurements.md`](docs/day0-measurements.md) — the latency numbers the architecture is built on
 - [`docs/research-multimodal-robot-agent-stack-2026-08-20.md`](docs/research-multimodal-robot-agent-stack-2026-08-20.md) — stack survey (ASR/TTS/vision/sim), with licences
