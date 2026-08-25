@@ -56,6 +56,47 @@ class ReadOnlyError(StoreError):
 # everything written here is personal data with a retention period attached.
 STREAMS = ("events", "audit")
 
+# Snapshot names nothing in this repo may write yet (design item T-A5).
+#
+# This is the read-only guarantee for the S3 profile card, and it is *here* rather
+# than in `memory/profile.py` on purpose. The plan phrases T-A5 as "call any write
+# API on the seed card and it raises", but the write API is `write_snapshot` on
+# this class — a profile module that simply declines to call it constrains only the
+# callers that go through it, and any of the nine nodes can reach the store
+# directly. A guarantee enforced in the reader is a comment; enforced in the one
+# writer, it holds for code that has never heard of the profile module.
+#
+# Why the card is locked at all: a semantic fact must carry `source_episode_ids`
+# so that deleting an episode deletes what it produced, and there are no episodes
+# until S4. A card written now would hold facts that no deletion can reach — see
+# plan §0-5, which is the defect the build order would otherwise land.
+PROTECTED_SNAPSHOTS = frozenset({"profile.json"})
+
+# Lifted by S5, which is when automatic writes become correct (an episode store
+# exists, so a written fact can name its sources). A named function rather than a
+# mutable module global: `store.PROTECTED_SNAPSHOTS = frozenset()` anywhere in the
+# tree would be a silent, greppable-only unlock, whereas a call site is a line a
+# reviewer sees in a diff and `tests/test_profile.py` can assert nothing outside
+# tests/ contains.
+_UNLOCKED: set[str] = set()
+
+
+def unlock_for_s5(name: str) -> None:
+    """Allow snapshot writes to `name`. The only sanctioned way past the lock.
+
+    Not a context manager and not reversible on purpose: a scoped unlock invites
+    "just for this one write", which is how a lock stops describing the system. When
+    S5 lands, it calls this once at startup and the audit log records that it did.
+    """
+    if name not in PROTECTED_SNAPSHOTS:
+        raise StoreError(f"{name!r} is not a protected snapshot; the protected set "
+                         f"is {sorted(PROTECTED_SNAPSHOTS)}")
+    _UNLOCKED.add(name)
+
+
+def is_locked(name: str) -> bool:
+    return name in PROTECTED_SNAPSHOTS and name not in _UNLOCKED
+
 # Where the data lives in production. Overridable by env var for the instance,
 # because the home directory differs between the laptop and the AMI's user — but
 # the override is validated exactly like the default, so it cannot be used to
@@ -212,6 +253,14 @@ class Store:
         """
         if "/" in name or name.startswith("."):
             raise StoreError(f"snapshot name {name!r} must be a plain file name")
+        # Before `_raise_if_failed`, so a locked write is refused for the reason it
+        # was refused even when the writer thread has already died: two different
+        # causes reported as one message is how a lock gets removed to "fix" a disk.
+        if is_locked(name):
+            raise ReadOnlyError(
+                f"{name!r} is a read-only seed until S5: a fact written now would "
+                "have no source episode (episodes arrive in S4) and no deletion "
+                "could ever reach it. memory.store.unlock_for_s5 is the one way past")
         self._raise_if_failed()
         try:
             body = json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n"

@@ -239,6 +239,14 @@ def test_a_tolerant_reader_would_hide_the_corruption(tmp_path):
 
 
 # --------------------------------------------- T-A2 atomic replace, no debris (D)
+#
+# These use `rps_table.json`, not `profile.json`. The profile card is in
+# `PROTECTED_SNAPSHOTS` from S3 onwards, so a snapshot test written against it would
+# be exercising the lock rather than the rename — and it would have to unlock first,
+# which is a test that quietly proves the lock can be lifted by anybody who finds it
+# inconvenient. The RPS table is the other real snapshot caller (Track B) and is not
+# locked, so the atomicity claim is tested on a name where atomicity is the only
+# thing in the way.
 def test_a_snapshot_replaces_the_file_not_its_contents(tmp_path):
     """T-A2. A reader holding the old snapshot keeps reading the old bytes.
 
@@ -247,14 +255,14 @@ def test_a_snapshot_replaces_the_file_not_its_contents(tmp_path):
     Needs no fault injection, which is why it can be compared against the mutant.
     """
     with make_store(tmp_path) as store:
-        store.write_snapshot("profile.json", {"name": "old"})
+        store.write_snapshot("rps_table.json", {"name": "old"})
         store.flush()
-        path = store.root / "profile.json"
+        path = store.root / "rps_table.json"
         before = path.read_bytes()
         inode_before = path.stat().st_ino
 
         with path.open("rb") as held:
-            store.write_snapshot("profile.json", {"name": "new"})
+            store.write_snapshot("rps_table.json", {"name": "new"})
             store.flush()
             assert held.read() == before, "the held reader saw the write land"
 
@@ -270,12 +278,12 @@ def test_an_in_place_snapshot_write_is_visible_to_a_held_reader(tmp_path):
         "            final.write_text(body, encoding='utf-8')",
     ))
     with make_store(tmp_path, module=mutant) as store:
-        store.write_snapshot("profile.json", {"name": "old"})
+        store.write_snapshot("rps_table.json", {"name": "old"})
         store.flush()
-        path = store.root / "profile.json"
+        path = store.root / "rps_table.json"
         before = path.read_bytes()
         with path.open("rb") as held:
-            store.write_snapshot("profile.json", {"name": "new"})
+            store.write_snapshot("rps_table.json", {"name": "new"})
             store.flush()
             assert held.read() != before, "mutant did not change what the reader sees"
 
@@ -297,24 +305,24 @@ def _fail_the_next_replace(module, monkeypatch) -> None:
 def test_a_failed_replace_leaves_the_old_snapshot_and_no_debris(tmp_path, monkeypatch):
     """T-A2's injection half: the old file survives and nothing is left behind.
 
-    A directory slowly filling with `.profile.json.*.tmp` is how "the snapshot is
+    A directory slowly filling with `.rps_table.json.*.tmp` is how "the snapshot is
     fine" and "every write has failed since Tuesday" come to look identical.
 
     No `with` block: the store's writer is dead by the end, so `close()` — which
     flushes — would raise out of `__exit__` and mask the assertions.
     """
     store = make_store(tmp_path)
-    store.write_snapshot("profile.json", {"name": "old"})
+    store.write_snapshot("rps_table.json", {"name": "old"})
     store.flush()
-    before = (store.root / "profile.json").read_bytes()
+    before = (store.root / "rps_table.json").read_bytes()
 
     _fail_the_next_replace(st, monkeypatch)
-    store.write_snapshot("profile.json", {"name": "new"})
+    store.write_snapshot("rps_table.json", {"name": "new"})
     with pytest.raises(st.StoreError, match="writer thread died"):
         store.flush()
     monkeypatch.undo()
 
-    assert (store.root / "profile.json").read_bytes() == before
+    assert (store.root / "rps_table.json").read_bytes() == before
     debris = [p.name for p in store.root.iterdir() if p.name.endswith(".tmp")]
     assert debris == [], f"temp files survived the failure: {debris}"
 
@@ -325,7 +333,7 @@ def test_without_the_unlink_a_failed_snapshot_leaves_a_temp_file(tmp_path, monke
     mutant = load_mutant(tmp_path, (TEMP_CLEANUP, "            pass"))
     store = make_store(tmp_path, module=mutant)
     _fail_the_next_replace(mutant, monkeypatch)
-    store.write_snapshot("profile.json", {"name": "new"})
+    store.write_snapshot("rps_table.json", {"name": "new"})
     with pytest.raises(mutant.StoreError):
         store.flush()
     monkeypatch.undo()
