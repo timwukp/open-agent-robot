@@ -1,0 +1,40 @@
+{
+  "artifact": "docs/architecture.svg",
+  "question": "does the animation in the committed bytes actually move on a current browser, and does it survive GitHub's own SVG viewer",
+  "measured_on": "2026-08-25",
+  "browser": "Chromium major version 151 (the UA's minor/build/patch are all zero; the dotted quad is not written out because infra/redact_scan.py reads one as an IPv4, and a version number is not a good enough reason to teach the scanner an exception) driven over CDP, prefers-reduced-motion: no-preference (asserted, not assumed)",
+  "read_from": "the pushed blob served over http to rule out any local edit, and the same blob through GitHub's file view",
+
+  "the_gate_argument_is_itself_a_claim": {
+    "finding": "CSS.supports('offset-path', 'path(\"\")') is FALSE in Chrome 151, while CSS.supports('offset-path', 'path(\"M 0 0 L 1 1\")') is TRUE",
+    "why_it_matters": "path(\"\") is the idiomatic feature-detection spelling. A gate written that way closes on a browser that fully supports the feature; every dot then keeps its base opacity: 0, the diagram is silently static, and every offline check still passes because the gate is present and correctly nested.",
+    "as_shipped": "@supports (offset-path: path('M 0 0 L 1 1'))",
+    "now_checked_by": "tests/test_architecture.py::animation_findings requires the @supports argument to be a quoted path beginning with a moveto; the named mutant is supports_argument_emptied"
+  },
+
+  "the_css_is_effective": {
+    "packet_circles": 8,
+    "animations_on_the_document": 17,
+    "first_dot": {"animation_name": "hop0", "duration_ms": 11000, "offset_path": "path(\"M 580 479 L 620 479\")"},
+    "driven_timeline_samples": [
+      {"dot": "hop0", "at_ms": 10, "x": 575, "y": 474, "offset_distance": "0%", "opacity": "0.227273"},
+      {"dot": "hop1", "at_ms": 1650, "x": 895, "y": 530, "offset_distance": "17.9487%", "opacity": "1"},
+      {"dot": "hop1", "at_ms": 3300, "x": 895, "y": 608, "offset_distance": "100%", "opacity": "0"},
+      {"dot": "hop2", "at_ms": 3300, "x": 745, "y": 817, "offset_distance": "39.3162%", "opacity": "1"}
+    ],
+    "conclusion": "3 of the first 4 dots change position between two driven timeline points, offset-distance sweeps 0% -> 100%, and opacity peaks at 1 inside each dot's window. The keyframes, the support gate and the offset-path all apply in Chrome 151."
+  },
+
+  "what_this_pass_could_not_measure": {
+    "problem": "document.timeline.currentTime stayed 0 and every animation's currentTime stayed 0 across a 3 s wait, so the automation context does not advance the animation timeline at all",
+    "consequence": "two viewport screenshots 2.5 s apart came back byte-identical (md5 ba1ba56eb748 both times). That is a measurement of the harness, not of the artifact — the same freeze would produce identical screenshots for any correct animation.",
+    "how_the_claim_was_rescued": "the timeline was driven explicitly (Animation.currentTime set to fixed offsets) and positions read at each point. That proves the CSS produces motion; it does not prove a real viewer plays it.",
+    "still_manual": "whether GitHub's own SVG viewer plays it. GitHub renders the file as <img src=raw...svg> inside viewscreen.githubusercontent.com, which is a separate origin, so nothing inside it can be inspected from the page. A human opening docs/architecture.svg on github.com is the only check for that, and it is listed in docs/test-design.md L5 rather than claimed here.",
+    "lesson": "a probe proves nothing until it arrives: a frozen timeline and a broken animation are the same two screenshots."
+  },
+
+  "degradation": {
+    "no_offset_path_support": "Firefox before 122, Safari before 16 — the @supports block never applies, .pkt/.dead keep the top-level opacity: 0, and the diagram is complete and static. The hop sequence is still readable as the numbered list, whose length is asserted equal to the dot list.",
+    "prefers_reduced_motion_reduce": "same static diagram, by a second query"
+  }
+}

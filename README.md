@@ -65,6 +65,16 @@ web/robot-view/  (browser)               │      ├─ perception/ hand_node  
                                          │      └─ body/     body_node  (MuJoCo + MJPEG)
 ```
 
+The same picture drawn to scale, with the packets moving:
+[`docs/architecture.svg`](docs/architecture.svg) — every node, topic and gap in it is
+generated from `infra/ros_census.py`, which reads the launcher rather than a list, so a
+node that stops being started stops being drawn. The animation uses CSS `offset-path`
+(Chrome, Safari 16+, Firefox 122+); an older renderer degrades to the same diagram
+without moving packets, which loses nothing but the motion. For the *sequences* — one
+turn ear to mouth, stopping a voice already in the air, what `forget what I said` costs —
+see [`docs/workflow.md`](docs/workflow.md), whose ten Mermaid charts are checked against
+that same census in both directions.
+
 | Layer | Component | What it is |
 |---|---|---|
 | Hearing | `speech/asr_node.py` | FunASR `paraformer-zh-streaming`, 600 ms chunks, utterance accumulation, half-duplex gate so the robot never transcribes itself |
@@ -128,7 +138,7 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 | `web/robot-view/` | Single-page face: MJPEG body view + event HUD |
 | `skills/` | Markdown skills plus the loader that gates them. See [`skills/README.md`](skills/README.md) |
 | `safety/`, `memory/`, `agent/context.py`, `agent/tools.py` | The constitution, the single-writer store, the salience formula, the episode segmenter, the nightly consolidation, the five-path retriever, the deletion path, the prompt assembler, the asynchronous output guard and the tool registry — pure modules, zero ROS, so their tests run on a laptop |
-| `tests/` | Offline suite, 1401 cases: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
+| `tests/` | Offline suite, 1445 cases: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
 | `infra/` | Provisioning, instance setup, process supervision (`run_ec2.sh` uses pid files, never `pkill` patterns) |
 | `docs/` | Design record: seven research rounds (raw evidence under `docs/evidence/`), the day-0 latency measurements, the demo runbook, the memory/safety design critique, and the [test contract](docs/test-design.md) |
 
@@ -137,7 +147,7 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 ```bash
 pytest -m "not mutation"   # per-save loop
 pytest                     # per-PR: adds the named mutants
-pytest -m mutation         # the mutants alone (257 cases on 2026-08-24)
+pytest -m mutation         # the mutants alone (279 cases on 2026-08-25)
 infra/check_deploy.sh      # is every node in the repo actually started by the runner?
 ```
 

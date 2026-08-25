@@ -1,0 +1,43 @@
+{
+  "artifact": "docs/workflow.md",
+  "question": "does every Mermaid block in docs/workflow.md parse, render, and land narrow enough to be readable at GitHub's content width",
+  "why_a_render_and_not_a_parse": "all 10 blocks parsed AND rendered without error at a point when section 1 was 3141 px wide with a decision subtree flung outside its subgraph. Parsing proves the syntax; only the pixels prove the chart. This file records the pixels.",
+  "renderer": "mermaid@11 ESM from cdn.jsdelivr.net, theme neutral, mermaid.parse() then mermaid.render() per block",
+  "browser": "Chromium via Playwright, viewport 1620x1000, devicePixelRatio 1 (scale: css)",
+  "measured_from": "the rendered SVG's own viewBox, plus getBBox() on every edge path",
+  "ceiling_px": 1500,
+  "ceiling_rationale": "GitHub's file-view content column is about 880 px. A diagram wider than that is scaled down, and the scale applies to the label text: at 3141 px the 14 px labels render at about 4 px. 1500 px scales to about 0.59x, which keeps a 14 px label above 8 px. Height is not capped, because GitHub scrolls vertically and does not scale for height.",
+  "tallest_edge_is_recorded_not_gated": "tallest_edge_frac_of_canvas is recorded, NOT a pass criterion. A shared early-exit terminal (block 8's REFUSED, block 7's stop transitions) legitimately produces a full-height edge. What made the first draft unreadable was an edge whose two ends had nothing to do with each other (microphone to ws_gateway, spanning 100% of a 3847 px canvas) combined with the width. Gating on this number would forbid correct charts and would not have caught the actual defect, which width does.",
+  "totals": {
+    "blocks": 10,
+    "parsed": 10,
+    "rendered": 10,
+    "errors": 0,
+    "max_width_px": 1498,
+    "max_width_block_index": 5
+  },
+  "blocks": [
+    {"index": 0, "section": "1. One turn, ear to mouth", "kind": "flowchart TD", "parsed": true, "rendered": true, "error": null, "width_px": 1465, "height_px": 3695, "nodes": 29, "edges": 32, "tallest_edge_px": 362, "tallest_edge_frac_of_canvas": 0.098},
+    {"index": 1, "section": "1. three publishers into one mouth", "kind": "flowchart LR", "parsed": true, "rendered": true, "error": null, "width_px": 1086, "height_px": 582, "nodes": 11, "edges": 9, "tallest_edge_px": 211, "tallest_edge_frac_of_canvas": 0.363},
+    {"index": 2, "section": "2. The seeing lane", "kind": "flowchart TD", "parsed": true, "rendered": true, "error": null, "width_px": 1248, "height_px": 774, "nodes": 9, "edges": 13, "tallest_edge_px": 461, "tallest_edge_frac_of_canvas": 0.595},
+    {"index": 3, "section": "3. Stopping a voice already in the air", "kind": "sequenceDiagram", "parsed": true, "rendered": true, "error": null, "width_px": 1473, "height_px": 1306, "nodes": 20, "edges": 16, "tallest_edge_px": 23, "tallest_edge_frac_of_canvas": 0.018},
+    {"index": 4, "section": "4. The single writer, on the bus", "kind": "flowchart LR", "parsed": true, "rendered": true, "error": null, "width_px": 1098, "height_px": 377, "nodes": 5, "edges": 5, "tallest_edge_px": 129, "tallest_edge_frac_of_canvas": 0.342},
+    {"index": 5, "section": "4. The single writer, on disk", "kind": "flowchart LR", "parsed": true, "rendered": true, "error": null, "width_px": 1498, "height_px": 594, "nodes": 13, "edges": 16, "tallest_edge_px": 232, "tallest_edge_frac_of_canvas": 0.391},
+    {"index": 6, "section": "5. What forget what I said costs", "kind": "flowchart TD", "parsed": true, "rendered": true, "error": null, "width_px": 1164, "height_px": 892, "nodes": 10, "edges": 12, "tallest_edge_px": 132, "tallest_edge_frac_of_canvas": 0.148},
+    {"index": 7, "section": "6. game_node's states", "kind": "stateDiagram-v2", "parsed": true, "rendered": true, "error": null, "width_px": 1466, "height_px": 1004, "nodes": 9, "edges": 15, "tallest_edge_px": 715, "tallest_edge_frac_of_canvas": 0.712},
+    {"index": 8, "section": "7. The tool boundary, six outcomes", "kind": "flowchart TD", "parsed": true, "rendered": true, "error": null, "width_px": 1114, "height_px": 1961, "nodes": 15, "edges": 19, "tallest_edge_px": 1394, "tallest_edge_frac_of_canvas": 0.711},
+    {"index": 9, "section": "8. What the model's output can reach", "kind": "flowchart LR", "parsed": true, "rendered": true, "error": null, "width_px": 967, "height_px": 806, "nodes": 14, "edges": 12, "tallest_edge_px": 253, "tallest_edge_frac_of_canvas": 0.314}
+  ],
+  "first_draft_for_comparison": {
+    "note": "same 7-block draft, all parsed and all rendered, no errors — and unusable. Kept here because the numbers are the argument for measuring width at all.",
+    "widths_px": [3141, 2305, 1900, 3576, 1275, 2994, 1049],
+    "max_width_px": 3576,
+    "section_1": {"width_px": 3141, "height_px": 3732, "defects_seen_by_eye": ["a decision subtree laid outside the subgraph that contained its siblings", "edges snaking the full canvas height", "topic names spelled twice, once as a node and once as an edge label", "label text at roughly 4-5 px after GitHub's scale"]}
+  },
+  "defect_found_by_rendering_that_no_parse_reports": {
+    "what": "block 5 referenced the node id `memory`, which is declared in block 4 and not in block 5",
+    "mermaid_behaviour": "no error, no warning — it drew a box whose visible label was the bare id `memory`",
+    "seen_how": "by looking at the PNG",
+    "now_checked_by": "tests/test_architecture.py asserts, per flowchart block, that every id used in an edge is given a label somewhere in that same block"
+  }
+}

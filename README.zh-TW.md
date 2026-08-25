@@ -33,6 +33,14 @@ web/robot-view/  (瀏覽器)                 │      ├─ perception/ hand_no
                                          │      └─ body/     body_node  (MuJoCo + MJPEG)
 ```
 
+同一張圖照比例畫、而且封包會動的版本:[`docs/architecture.svg`](docs/architecture.svg)
+—— 裡面每個節點、每個 topic、每個缺口都由 `infra/ros_census.py` 生成,而它讀的是啟動器
+而不是一份清單,所以一個不再被啟動的節點也就不再被畫出來。動畫用的是 CSS `offset-path`
+(Chrome、Safari 16+、Firefox 122+);較舊的 renderer 會退化成同一張圖但封包不動,
+除了動態以外什麼都沒少。想看**流程**——一個回合從耳朵到嘴巴、把已經出口的聲音攔下來、
+說「忘記我說的 X」到底要付什麼代價——看 [`docs/workflow.md`](docs/workflow.md),
+它那十張 Mermaid 圖跟同一份普查在兩個方向上都對過帳。
+
 | 層 | 元件 | 是什麼 |
 |---|---|---|
 | 聽 | `speech/asr_node.py` | FunASR `paraformer-zh-streaming`,600 ms 塊,整句累積;半雙工閘讓機器人不會把自己的聲音聽寫進去 |
@@ -95,7 +103,7 @@ open web/robot-view/index.html
 | `web/robot-view/` | 單頁「臉」:MJPEG 身體視圖 + 事件 HUD |
 | `skills/` | Markdown 技能,以及替它們把關的加載器。見 [`skills/README.md`](skills/README.md) |
 | `safety/`、`memory/`、`agent/context.py`、`agent/tools.py` | 憲法、單寫者儲存層、salience 公式、episode 切分器、夜間鞏固、五條路徑的檢索器、刪除路徑、提示組裝器、異步輸出守衛與工具登錄冊 ——純模組、零 ROS,所以它們的測試在筆電上就跑得完 |
-| `tests/` | 離線測試 1401 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
+| `tests/` | 離線測試 1445 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
 | `infra/` | 開機供裝、環境安裝、行程監管(`run_ec2.sh` 用 pid 檔,**絕不**用 `pkill` 樣式) |
 | `docs/` | 設計記錄:七輪研究(原始證據在 `docs/evidence/`)、day-0 延遲量測、demo 手冊、記憶與安全的設計批判,以及[測試契約](docs/test-design.md) |
 
@@ -104,7 +112,7 @@ open web/robot-view/index.html
 ```bash
 pytest -m "not mutation"   # 每次存檔跑
 pytest                     # 每個 PR 跑:加上具名突變體
-pytest -m mutation         # 只跑突變體(2026-08-24 量到 257 個案例)
+pytest -m mutation         # 只跑突變體(2026-08-25 量到 279 個案例)
 infra/check_deploy.sh      # repo 裡的每個節點,runner 真的會啟動它嗎?
 ```
 
