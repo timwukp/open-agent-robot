@@ -72,15 +72,28 @@ def patterns() -> list[tuple[str, re.Pattern[str]]]:
 
 
 def read_list(list_path: str) -> list[str]:
-    """Paths from a `<mode> <path>` file list. Raises OSError if unreadable."""
+    """Paths from a `<mode> <path>` file list. Raises OSError if unreadable.
+
+    Blank lines and `#` comments are skipped, because `.push/push_branch.py`
+    skips them and the two readers must agree about what the manifest *is*. They
+    did not: this scanner used to split `# T-C5 …` into a mode and a path and then
+    report `CANNOT RUN: listed path is not a file`, so a manifest that pushed
+    cleanly could not be scanned at all. That failure was loud rather than a false
+    clean, which is why it survived — but a format only one of its two readers
+    implements is not a format. `tests/test_redact_scan.py` now asserts the two
+    parsers return the same paths for the same text, so the next divergence is red
+    whichever side moves.
+    """
     out = []
     with open(list_path) as fh:
         for line in fh:
-            if line.strip():
-                parts = line.split(None, 1)
-                if len(parts) != 2:
-                    raise ValueError(f"not a '<mode> <path>' line: {line!r}")
-                out.append(parts[1].strip())
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                raise ValueError(f"not a '<mode> <path>' line: {line!r}")
+            out.append(parts[1].strip())
     return out
 
 

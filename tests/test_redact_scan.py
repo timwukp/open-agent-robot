@@ -168,6 +168,156 @@ def test_a_malformed_list_line_cannot_run(tmp_path: pathlib.Path) -> None:
     assert r.returncode == CANNOT_RUN, f"rc={r.returncode}\n{r.stdout}{r.stderr}"
 
 
+def _push_branch_module():
+    """`.push/push_branch.py` loaded by path — `.push` is not an importable name.
+
+    Safe to import: its module level is imports, two constants, function defs and an
+    `if __name__ ==` guard, so nothing here touches the network. Asserted, not
+    assumed, because this file imports the one script in the tree that can move a
+    ref, and the check costs one AST walk.
+    """
+    import ast
+    import importlib.util
+
+    path = REPO_ROOT / ".push" / "push_branch.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        assert isinstance(node, (ast.Expr, ast.Import, ast.ImportFrom, ast.Assign,
+                                 ast.FunctionDef, ast.If)), \
+            f"{type(node).__name__} at module level in {path.name}: importing it " \
+            "to test its parser would execute that"
+    spec = importlib.util.spec_from_file_location("oar_push_branch", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_module(name: str, path: pathlib.Path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SKIP_COMMENTS = '            if not line or line.startswith("#"):\n'
+
+MANIFEST_WITH_COMMENTS = """\
+# T-C5 的注入半段:提示組裝器 + 把接縫接上部署路徑。
+#   an indented continuation line
+
+100644 README.md
+100644 docs/test-design.md
+"""
+
+
+def _fixture_is_not_vacuous() -> None:
+    lines = MANIFEST_WITH_COMMENTS.splitlines()
+    assert sum(1 for ln in lines if ln.startswith("#")) >= 2, "fixture has no comment"
+    assert "" in lines, "fixture has no blank line"
+    assert any(len(ln.split(None, 1)) == 2 for ln in lines if ln.startswith("#")), \
+        "fixture's comments do not split into a mode and a path, so a parser that " \
+        "failed to skip them would not misread anything and this test is vacuous"
+
+
+def load_mutant(tmp_path: pathlib.Path, label: str, old: str, new: str):
+    """`infra/redact_scan.py` with one anchor rewritten, loaded as a module.
+
+    The anchor is asserted **present and unique** before the rewrite: a refactor that
+    moves it must break this harness loudly instead of quietly producing a mutant
+    identical to the original, which would pass and mean nothing.
+
+    The `importlib` calls are written out here rather than delegated to
+    `_load_module`, even though that is one line longer. `test_meta.py` *derives*
+    what a mutant applier is — a function that rewrites source text **and** turns the
+    result back into a program — and a helper that patches text and then hands the
+    revival to a callee is an applier the detector cannot see, which is how an
+    unmarked mutation test would get past layer L3 again.
+    """
+    import importlib.util
+
+    src = SCANNER.read_text(encoding="utf-8")
+    assert src.count(old) == 1, f"anchor for {label!r} occurs {src.count(old)} times"
+    target = tmp_path / f"mut_{label}.py"
+    target.write_text(src.replace(old, new), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(f"oar_redact_scan_{label}", target)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_both_readers_of_the_manifest_agree_on_what_it_lists(
+        tmp_path: pathlib.Path) -> None:
+    """The scanner and the pusher read the same file, so they must read it the same.
+
+    They did not. `push_branch.parse_files` skips `#` comments; `read_list` used to
+    split `# T-C5 …` into a mode and a path and exit 3, so a manifest the pusher
+    accepted could not be scanned at all. Exit 3 made it loud rather than a false
+    clean, which is why it went unnoticed until a manifest first carried a comment.
+
+    This asserts *agreement* rather than each parser separately, because the
+    invariant has two sides and a test that pins only one side goes green while the
+    other side moves. The comparison is on paths: the pusher also returns modes and
+    additionally refuses a non-digit mode, which makes it strictly the stricter
+    reader — the safe direction, since a manifest it refuses is a push that does not
+    happen.
+    """
+    _fixture_is_not_vacuous()
+    listing = tmp_path / "files.txt"
+    listing.write_text(MANIFEST_WITH_COMMENTS, encoding="utf-8")
+
+    scanned = _load_module("oar_redact_scan", SCANNER).read_list(str(listing))
+    pushed = [path for _mode, path in _push_branch_module().parse_files(listing)]
+
+    assert scanned == pushed == ["README.md", "docs/test-design.md"], \
+        f"scanner sees {scanned!r}, pusher sees {pushed!r}"
+
+
+@pytest.mark.mutation
+def test_a_scanner_that_does_not_skip_comments_disagrees_with_the_pusher(
+        tmp_path: pathlib.Path) -> None:
+    """The mutant the agreement test exists to kill: drop the `#` half of the skip.
+
+    Its output is not merely different, it is *wrong in the dangerous direction* for
+    a gate — the mutant hands `read_list` two paths that are prose, so `main()` exits
+    3 and the push is blocked on a manifest that is in fact fine. Asserting the
+    disagreement rather than the exit code keeps this test about the invariant the
+    fix created, not about which of the three codes today's `main()` happens to pick.
+    """
+    _fixture_is_not_vacuous()
+    listing = tmp_path / "files.txt"
+    listing.write_text(MANIFEST_WITH_COMMENTS, encoding="utf-8")
+
+    mutant = load_mutant(tmp_path, "nocomment", SKIP_COMMENTS,
+                         "            if not line:\n")
+    pushed = [path for _mode, path in _push_branch_module().parse_files(listing)]
+    scanned = mutant.read_list(str(listing))
+
+    assert scanned != pushed, \
+        "the mutant read the manifest the same way the pusher does, so the skip it " \
+        "removed is not what makes the two agree and the agreement test measures " \
+        "the wrong thing"
+    assert scanned[:2] == ["T-C5 的注入半段:提示組裝器 + 把接縫接上部署路徑。",
+                           "an indented continuation line"], \
+        f"the mutant failed in some other way than reading comments as paths: {scanned!r}"
+
+
+@pytest.mark.mutation
+def test_the_no_mutant_control_agrees(tmp_path: pathlib.Path) -> None:
+    """Zero replacements through the same harness. Without it, the test above is
+    consistent with a `load_mutant` that produces a broken module every time."""
+    _fixture_is_not_vacuous()
+    listing = tmp_path / "files.txt"
+    listing.write_text(MANIFEST_WITH_COMMENTS, encoding="utf-8")
+
+    control = load_mutant(tmp_path, "control", SKIP_COMMENTS, SKIP_COMMENTS)
+    pushed = [path for _mode, path in _push_branch_module().parse_files(listing)]
+
+    assert control.read_list(str(listing)) == pushed == ["README.md",
+                                                         "docs/test-design.md"]
+
+
 def test_the_real_push_list_is_clean_if_one_exists() -> None:
     """The live check, when there is a push staged. Skipped rather than failed
     when `.push/files.txt` is absent: this file is a permanent part of the suite
