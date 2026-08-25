@@ -348,6 +348,7 @@ MODULE_PROSE: dict[str, str] = {
     "skills/loader.py": "L1 index injection, read_skill_file path fence",
     "skills/measure_l1_tokens.py": "T-I1 token measurement against Bedrock, by hand",
     "infra/ros_census.py": "the one reader of the node and topic graph",
+    "infra/wiring_census.py": "unreached files, uncalled functions, unpassed params",
     "infra/arch_render.py": "this file: renders docs/architecture.svg from the census",
     "infra/entrypoints.py": "AST discovery of executable entrypoints",
     "infra/doc_counts.py": "documented numbers vs pytest collection",
