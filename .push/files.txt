@@ -1,5 +1,7 @@
+100644 memory/recall.py
 100644 memory/consolidate.py
-100644 tests/test_consolidate.py
+100644 memory/salience.py
+100644 tests/test_recall.py
 100644 docs/test-design.md
 100644 README.md
 100644 README.zh-TW.md
