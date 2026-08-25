@@ -138,7 +138,7 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 | `web/robot-view/` | Single-page face: MJPEG body view + event HUD |
 | `skills/` | Markdown skills plus the loader that gates them. See [`skills/README.md`](skills/README.md) |
 | `safety/`, `memory/`, `agent/context.py`, `agent/tools.py` | The constitution, the single-writer store, the salience formula, the episode segmenter, the nightly consolidation, the five-path retriever, the deletion path, the prompt assembler, the asynchronous output guard and the tool registry — pure modules, zero ROS, so their tests run on a laptop |
-| `tests/` | Offline suite, 1512 cases: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
+| `tests/` | Offline suite, 1586 cases: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
 | `infra/` | Provisioning, instance setup, process supervision (`run_ec2.sh` uses pid files, never `pkill` patterns) |
 | `docs/` | Design record: seven research rounds (raw evidence under `docs/evidence/`), the day-0 latency measurements, the demo runbook, the memory/safety design critique, and the [test contract](docs/test-design.md) |
 
@@ -147,7 +147,7 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 ```bash
 pytest -m "not mutation"   # per-save loop
 pytest                     # per-PR: adds the named mutants
-pytest -m mutation         # the mutants alone (304 cases on 2026-08-25)
+pytest -m mutation         # the mutants alone (333 cases on 2026-08-26)
 infra/check_deploy.sh      # is every node in the repo actually started by the runner?
 ```
 
@@ -212,8 +212,9 @@ preconditions** and **not evaluated**, because a document that writes all three 
 do X" tells the next reader the evidence is settled when it is not. The schedule is
 [`docs/plan.md`](docs/plan.md); the test contract is
 [`docs/test-design.md`](docs/test-design.md). Which document supersedes or partly overturns
-which will be recorded in `docs/INDEX.md`, which lands in the next PR
-([`docs/plan.md`](docs/plan.md) §3).
+which is recorded in [`docs/INDEX.md`](docs/INDEX.md) — one row per document under `docs/`,
+with a status from a closed set and a named reason, checked against the directory in both
+directions by `infra/doc_status.py` so nothing can join `docs/` unlisted.
 
 The rest of `docs/` is the **evidence**, kept verbatim rather than summarised into the
 conclusion — including the findings that went **against** intuition. Read a round for how a

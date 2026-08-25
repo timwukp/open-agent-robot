@@ -103,7 +103,7 @@ open web/robot-view/index.html
 | `web/robot-view/` | 單頁「臉」:MJPEG 身體視圖 + 事件 HUD |
 | `skills/` | Markdown 技能,以及替它們把關的加載器。見 [`skills/README.md`](skills/README.md) |
 | `safety/`、`memory/`、`agent/context.py`、`agent/tools.py` | 憲法、單寫者儲存層、salience 公式、episode 切分器、夜間鞏固、五條路徑的檢索器、刪除路徑、提示組裝器、異步輸出守衛與工具登錄冊 ——純模組、零 ROS,所以它們的測試在筆電上就跑得完 |
-| `tests/` | 離線測試 1512 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
+| `tests/` | 離線測試 1586 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
 | `infra/` | 開機供裝、環境安裝、行程監管(`run_ec2.sh` 用 pid 檔,**絕不**用 `pkill` 樣式) |
 | `docs/` | 設計記錄:七輪研究(原始證據在 `docs/evidence/`)、day-0 延遲量測、demo 手冊、記憶與安全的設計批判,以及[測試契約](docs/test-design.md) |
 
@@ -112,7 +112,7 @@ open web/robot-view/index.html
 ```bash
 pytest -m "not mutation"   # 每次存檔跑
 pytest                     # 每個 PR 跑:加上具名突變體
-pytest -m mutation         # 只跑突變體(2026-08-25 量到 304 個案例)
+pytest -m mutation         # 只跑突變體(2026-08-26 量到 333 個案例)
 infra/check_deploy.sh      # repo 裡的每個節點,runner 真的會啟動它嗎?
 ```
 
@@ -160,7 +160,9 @@ max 0.1137 ms,也就是一個 20 ms 節拍週期的 **0.57%**,而且它在一條
 最後那一節把**被證偽**、**延後且有具名前置條件**、**未被評估**分開寫,
 因為一份把三者都寫成「我們不做 X」的文件,會告訴下一個讀者證據已經蓋棺,而事實上沒有。
 排程在 [`docs/plan.md`](docs/plan.md);測試契約在 [`docs/test-design.md`](docs/test-design.md)。
-哪份文件取代或部分推翻哪一份會記在 `docs/INDEX.md`,它在下一個 PR 落地([`docs/plan.md`](docs/plan.md) §3)。
+哪份文件取代或部分推翻哪一份記在 [`docs/INDEX.md`](docs/INDEX.md) ——
+`docs/` 底下每一份文件一列,狀態取自封閉集、附一句具名理由,
+由 `infra/doc_status.py` 對目錄**兩個方向**對帳,所以沒有文件能不被列出就加進 `docs/`。
 
 `docs/` 其餘的部分是**證據**,原文保留而不是被壓縮成結論 —— 包括那些**反直覺**的發現。
 讀某一輪是為了知道一個數字怎麼量出來的,不是為了知道現在的設計是什麼;

@@ -30,14 +30,14 @@ vocabularies and a reader who does not know that will misread both:
 
 | Track | What it is | Status | Evidence |
 |---|---|---|---|
-| **A** | Memory, disclosure and the moral boundary: S0 → S8 | **Offline half complete, S0 through S8.** Every module exists, is tested offline, and the S-stage that built it is recorded per T-ID in `docs/test-design.md` §2. **The on-robot half is not connected** — see the seam count below | `docs/test-design.md` §2.A–§2.L; the dormancy is `infra/dormant_seams.tsv` (42 rows) |
+| **A** | Memory, disclosure and the moral boundary: S0 → S8 | **Offline half complete, S0 through S8.** Every module exists, is tested offline, and the S-stage that built it is recorded per T-ID in `docs/test-design.md` §2. **The on-robot half is not connected** — see the seam count below | `docs/test-design.md` §2.A–§2.L; the dormancy is `infra/dormant_seams.tsv` (43 rows) |
 | **B** | The rock-paper-scissors layer: the only non-LLM reward signal in the system | **Wired and playing, and amnesic every boot.** `game/opponent.py` runs; `game_node` publishes each resolved round on `/game/rps_round`; nothing subscribes, so the transition table is empty at every start and the ledger's own arithmetic gives **~120 rounds of a 1/3 coin** (81 order-2 contexts) | the `/game/rps_round` and `/memory/rps_table` rows of `infra/graph_gaps.tsv`, counted as one gap from both ends |
 | **C** | On-machine measurement | **2 of 5 done.** K3 (Guardrails latency) and K5 shipped; **K1, K2, K4 are blocked** — all three must run on the instance, and the security group is `/32`-restricted pending a human | `docs/test-design.md` §2.K and the L4 row of §3; blockers in [`docs/design.md`](design.md) §6 |
 
 **The one number to quote is the seam count, not a percentage.** `infra/wiring_census.py`
-reports **42** seams reachable only under `pytest`, and `infra/dormant_seams.tsv` carries 42
+reports **43** seams reachable only under `pytest`, and `infra/dormant_seams.tsv` carries 43
 rows with named reasons, checked in both directions. The ratio of dormant lines to tree
-lines (25.8% on 2026-08-25) falls whenever tests are added anywhere, including tests that
+lines (25.3% on 2026-08-26, down from 25.8% on 2026-08-25 with nothing wired) falls whenever tests are added anywhere, including tests that
 wire nothing — [`docs/design.md`](design.md) §1 derives why.
 
 **What R1 has to close, derived from the manifests rather than remembered:**
@@ -81,33 +81,86 @@ correct and uncommon, and no stage below is permitted to break them:
 | Stage | Contents | Status |
 |---|---|---|
 | **R0a** | `infra/wiring_census.py` + `infra/dormant_seams.tsv` + `tests/test_wiring_census.py`; the `T-L*` → `T-M*` docstring fix; the L1 time budget restored to `docs/test-design.md` §3 with the measured overrun | **Shipped — PR #28** |
-| **R0b-1** | `docs/design.md` + `docs/design.zh-TW.md` + this file; both READMEs' Design-record section pointing at `docs/design.md` as the single authority | **This PR** |
-| **R0b-2** | `docs/INDEX.md` + `infra/doc_status.tsv` + `infra/doc_status.py` + `tests/test_doc_status.py`; plus the rows that a new by-hand tool forces: `infra/standalone_entrypoints.tsv`, `infra/dormant_seams.tsv`, and a `MODULE_PROSE` row in `infra/arch_render.py` with an SVG regeneration. Plus widening `infra/doc_counts.py`'s `DOCS` tuple to `docs/design.md` and this file | Next |
+| **R0b-1** | `docs/design.md` + `docs/design.zh-TW.md` + this file; both READMEs' Design-record section pointing at `docs/design.md` as the single authority | **Shipped — PR #29** |
+| **R0b-2** | `docs/INDEX.md` + `infra/doc_status.tsv` + `infra/doc_status.py` + `tests/test_doc_status.py`; plus the rows that a new by-hand tool forces: `infra/standalone_entrypoints.tsv`, `infra/dormant_seams.tsv`, and a `MODULE_PROSE` row in `infra/arch_render.py` with an SVG regeneration. Plus widening `infra/doc_counts.py`'s `DOCS` tuple to `docs/design.md`, `docs/design.zh-TW.md`, this file and `pytest.ini`, and deriving the dormant-seam row count it quotes | **This PR** |
 
-**R0b-2's design is already fixed, because two of its decisions are not obvious.**
-Columns are `path <TAB> status <TAB> relation <TAB> reason`. `status` is the closed set
-`current` / `evidence` / `superseded`. `relation` takes `-`, `superseded_by:<path>`, or
-**`overturned_in_part_by:<path>`** — that third form exists because
-[`docs/design.md`](design.md) §4.4 is exactly that case: round 7's measurements stand while
-three of its citations do not, and a two-valued column would flatten a partial retraction
-into either "still current" or "dead". The scan walks `docs/**/*.md` **recursively** — the
-measured inventory as of this PR is **16 files**, 14 at the top level plus
-`docs/evidence/round7/README.md` and `docs/evidence/t-e3-browser-disclosure.md`, and a
-non-recursive glob would silently exempt the evidence directory. R0b-2 adds
-`docs/INDEX.md`, so that count moves to 17 in the same PR that starts gating it — which is
-the point: a document cannot join `docs/` without a row and a number both changing. It carries a `ran` flag so
-that a scan finding zero documents exits non-zero, and it mirrors the three-exit-code
-vocabulary of `redact_scan.py` / `doc_counts.py` / `wiring_census.py`.
+**Three of R0b-2's decisions were not obvious, and one of them changed once the data
+arrived.** Columns are `path <TAB> status <TAB> relation <TAB> reason`. `status` is the
+closed set `current` / `evidence` / `superseded`. `relation` takes `-` or one or more
+`;`-joined terms, each `superseded_by:<path>` or **`overturned_in_part_by:<path>`**. That
+third form exists because [`docs/design.md`](design.md) §4.4 is exactly that case: round
+7's measurements stand while three of its citations do not, and a two-valued column would
+flatten a partial retraction into either "still current" or "dead".
 
-**And one row that R0b-1 could not close about itself.** `infra/doc_counts.py`'s `DOCS`
-tuple is `docs/test-design.md`, `README.md`, `README.zh-TW.md` — so
-[`docs/design.md`](design.md) and this file quote numbers that **no gate reads**. R0b-2
-widens `DOCS` to both — and the mutant has to be aimed at the right thing. Adding a path to
-`DOCS` only makes the file *readable*; nothing checks it until a pattern in `audit()` quotes
-a number out of it, so a widened tuple with no new pattern is coverage in name only. The
-mutant is therefore "change the number in the document and require a finding", not "shrink
-the tuple". [`docs/design.md`](design.md) §7 states this gap in place rather than implying
-coverage it does not have.
+**The `;` was added because the tree demanded it.** A single-value column looked
+sufficient right up to the point of filling the table in: round 4 has *two* independent
+overturners — the critique replaces its §0 build order and round 5 re-answers its memory
+pick — and rounds 1–2 likewise have two. One slot would have forced dropping one of each
+pair, and the row would have read as complete while hiding half of what a reader needs,
+which is the same flattening the third relation form exists to prevent.
+
+The scan walks `docs/**/*.md` **recursively**, and the measured inventory as of this PR is
+**17 files**, 15 at the top level plus `docs/evidence/round7/README.md` and
+`docs/evidence/t-e3-browser-disclosure.md`; a non-recursive glob would silently exempt the
+evidence directory. The number moved 16 → 17 in the same PR that starts gating it, because
+`docs/INDEX.md` is itself a document under `docs/` — which is the point: nothing can join
+that directory without a row and a number both changing. `infra/doc_status.py` carries a
+`ran` flag so that a walk finding zero documents exits non-zero, and it mirrors the
+three-exit-code vocabulary of `redact_scan.py` / `doc_counts.py` / `wiring_census.py`.
+
+**And one row R0b-1 could not close about itself, now closed — but not where R0b-1 said
+it would be.** `infra/doc_counts.py`'s `DOCS` tuple was `docs/test-design.md`,
+`README.md`, `README.zh-TW.md`, so [`docs/design.md`](design.md) and this file quoted
+numbers **no gate read**. R0b-2 widens `DOCS` to `docs/design.md`,
+`docs/design.zh-TW.md` and this file — the Chinese counterpart was not in R0b-1's
+statement of the item and belongs there for the same reason the READMEs ship in one PR:
+two readers of one number each stay green while the other side moves.
+
+It also widens it to **`pytest.ini`**, which R0b-1 did not name either, and that one is
+worth stating separately because it is not a document: the `mutation` marker's help text
+carries the whole-layer wall-clock figures deliberately, so that they cannot drift from
+the marker they describe — and they were two rounds stale, quoting a 1512-case suite with
+304 mutants inside a paragraph explaining why a duration must be re-measured every round.
+Membership in `DOCS` is therefore *a file that quotes one of these numbers*, not *a file
+under `docs/`*. The same widening added the one figure in the tuple that is not a pytest
+number at all: the dormant-seam row count, which `docs/design.md` §1 tells readers to
+quote *instead of* the dormancy percentage, and which went stale in four documents the
+moment this PR's own by-hand tool joined `infra/dormant_seams.tsv`.
+
+R0b-1's PR message promised the `191 KiB` and file-count sentences would become patterns
+in `doc_counts.py`. They are checked, but in `infra/doc_status.py` instead, and the move
+is a correction worth naming: `doc_counts.py` derives its numbers from
+`pytest --collect-only`, while those two sentences are measurements of the `docs/`
+directory. Putting them in `doc_counts.py` would have made it walk `docs/` as well, giving
+this repo two producers of one census with nothing asserting they agree. The guard that
+already derives a quantity is the guard that must check the prose quoting it. What
+`doc_counts.py` gains instead are the numbers it *does* produce: the 62 collected cases and
+38 test functions of `tests/test_tools.py`, and the 15 mutation cases of
+`tests/test_store.py`, each quoted in documents that nothing checked before. The case count
+and the function count are two derivations because they are two quantities — 62 and 38, and
+the gap is parametrisation — and a sentence quoting both against one derivation is half
+checked. The store figure needed a correction on the way in: `docs/design.md` §4.5 called it
+"15 named mutants", which is the collected case count wearing the mutant count's label (the
+18 named mutants live inside those 15 cases). Gating a number means the label has to match
+what is derived, so both language editions now say *mutation cases*.
+
+The mutant has to be aimed at the right thing in both guards. Adding a path to `DOCS` only
+makes the file *readable*; nothing checks it until a pattern in `audit()` quotes a number
+out of it, so a widened tuple with no new pattern is coverage in name only. Every mutant is
+therefore "change the number in the document and require a finding", never "shrink the
+tuple".
+
+Widening the tuple was only half of the round. The other half was reading the *second* number
+in something already gated: each §0 row of `docs/test-design.md` states both how many cases a
+module collects and how many of those the mutation layer selects, and only the first had a
+reader. Comparing the second found three wrong rows immediately — 13 against a layer that
+collects 12, and two rows stating a breakdown of named mutants (17 + 1, 8 + 2) with no total
+for collection to disagree with. A breakdown is not a total; a gate does no arithmetic. The
+prose sites are the same defect at a different granularity, and they are found by scanning the
+document for the phrasing rather than by listing the sentences: a list cannot notice a
+paragraph written next month, and zero sites found is a finding rather than a pass. Both
+lessons are older than this repo — the seam count went stale in six places because the search
+had been for a remembered sentence instead of for the number.
 
 ---
 
@@ -275,7 +328,11 @@ tests/test_doc_status.py     (from R0b-2) document status table, both directions
 Counts are not repeated here — they live in `docs/test-design.md` §3 and are re-measured per
 round, because a duplicated count is a second thing to forget. `pytest -m "not mutation"` is
 re-timed every round for the same reason: R3's markers change each layer's membership, and a
-budget that was not re-measured is prose.
+budget that was not re-measured is prose. Each figure is recorded with its **n** and the
+machine's **load**, not just its seconds: in R0b-2 eight passes of the whole suite spanned
+137 s while the first two agreed to the tenth of a second, so an interval without an n cannot
+say how small a difference it is able to resolve — and three conclusions written from the
+two-pass version had to be withdrawn.
 
 **Push discipline:** never `git push`. GitHub Git Data API only, every blob verified against
 `git hash-object` and read back byte-for-byte, redaction scan before the push, and
