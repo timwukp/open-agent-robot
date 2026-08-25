@@ -168,7 +168,7 @@ had been for a remembered sentence instead of for the number.
 
 ---
 
-## 4. R1 — wiring (six PRs, plus one disposition)
+## 4. R1 — wiring (six PRs, plus one disposition and one correction)
 
 Each PR connects one dormant subsystem and **deletes at least one manifest row**. All of it
 is verifiable on the laptop; `/32` blocks none of it. The idiom is the one
@@ -182,6 +182,7 @@ L4 needs the machine.
 | # | PR | What changes | Rows deleted | The real risk |
 |---|---|---|---|---|
 | **R1.1** | `/memory/profile` → `agent_node` — **landed** | Subscribes latched with the publisher's durability; passes `card` into `assemble`; recomposes the prompt when the card arrives; the composed turn travels one hop on `/memory/audit` to the single writer | **2 seams + 1 graph gap** (planned as 3 seams: `unlock_for_s5()` was R1.3's all along, and R1.1 is the round that had to say so) | **Not wiring — a design decision**, and three of the four came out that way. `assemble` runs once in `__init__` while the card arrives asynchronously, so a turn that beats the card emits a finding rather than silently composing a card-less prompt. The plan said "call `audit_payload()` → `guard.audit_record`"; `store.check_audit` **refuses that composition in both directions**, so the record is built for the schema the single writer accepts and the refuted docstring became two `pytest.raises` assertions. And the plan's third seam belonged to another stage: the lock's reason is provenance, and there are no episodes to name until R1.3 |
+| **R1.1b** | The launch bootstrap — **not in the original plan** | One line in `memory/memory_node.py` (`sys.path.insert(0, str(Path(__file__).resolve().parent.parent))`) plus `bootstrap_findings()` in `infra/wiring_census.py`, a fourth census granularity that derives the requirement from the runner's launch table | **0** — and that is the point: it deletes no row because the defect was never in a manifest. It was in the space the census assumed | The single writer had **never started**. Launched as a file, its `sys.path[0]` was `memory/`, and `from memory import profile` raised `ModuleNotFoundError` before `rclpy.init()` on every boot from any working directory; the four other launched nodes carry that line and this one did not. Every offline test passed because pytest puts the repo root on `sys.path` first, and the census reported the seams behind that import as *reached* — a **false reached**, the one direction the census exists to make impossible. It ships as its own layer rather than inside R1.2 so a correctness fix does not arrive underneath unreviewed feature wiring |
 | **R1.2** | The RPS pair | `memory_node` subscribes `/game/rps_round`; publishes `/memory/rps_table` latched | 2 graph gaps | The pair must be wired at both ends or neither — the ledger counts it as one gap from both sides. Table round-trip is already covered by T-H5; the node half is new |
 | **R1.3** | Episode streaming | `memory_node` subscribes `/speech/asr`, `/detections`, `/game/events_out`; runs `segment` → `salience.stamp` → `consolidate` → `store.append` | 4 seams | The single-writer invariant: only `memory_node` may persist. The 45 s silence must be timed *by `memory_node`*, because `asr_node` publishes nothing during silence — there is no message whose absence a subscriber could notice |
 | **R1.4** | `/memory/recall` service | `memory_node` serves it; `agent_node` calls it from a worker thread with a **150 ms** hard deadline, falling back to the file card | 1 seam (which alone holds 1,757 production lines dormant) | **Must not** use `spin_until_future_complete` — that spins a second executor against the single spin at `agent_node.py:203`. Whether 150 ms is even achievable is **T-K4**, which is blocked (§1, Track C) |
@@ -191,7 +192,7 @@ L4 needs the machine.
 
 **Order, and why it is a dependency order rather than a preference.** R1.1 was smallest and
 carries the heaviest promise; it landed, and it was smallest only in wiring — most of its
-diff is the four census and document gates that one new topic turned red. R1.2 must wire both ends. R1.3 must precede R1.4 (recall has
+diff is the four census and document gates that one new topic turned red. R1.1b sits between them for a reason that is not scheduling: it fixes a defect R1.1's own PR message would have been wrong about, so it must land before anything else claims the card reaches a running robot. R1.2 must wire both ends. R1.3 must precede R1.4 (recall has
 nothing to retrieve until episodes are written) and precedes R5 entirely (§8). R1.6 is last.
 
 ---

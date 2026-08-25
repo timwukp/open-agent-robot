@@ -141,6 +141,23 @@ NEEDS_STAGE = ("pending_stage", "defect")
 STAGE_RE = re.compile(r"\bR[0-9]+\.[0-9]+\b")
 REASON_FLOOR = 60          # a shorter reason is a shrug; see graph_gaps.tsv's rows
 
+# The shape of the one line that makes a launched file able to import its own repo, as
+# every launched node that needs it already spells it:
+#
+#     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+#
+# Matched by shape and **not evaluated**, and the limit is stated because it is where this
+# check stops: a bootstrap that computes the wrong directory has the right shape. What it
+# does catch is the absence of one, which is the defect that was on disk — and absence is
+# the failure that produces no traceback anybody reads, because the node dies at import
+# and `run_ec2.sh status` reports it as `down` exactly like a node nobody started.
+#
+# The `.parent` count is derived from how deep the launched file sits rather than fixed at
+# two, so a node added at `pkg/sub/node.py` needs three and this check knows it. Every
+# launched file today is one directory down.
+BOOTSTRAP_CALL = "sys.path.insert"
+BOOTSTRAP_ROOT = "Path(__file__).resolve()"
+
 
 class CensusError(Exception):
     """The census cannot be trusted. Exit 3, never 0."""
@@ -361,12 +378,87 @@ def standalone_paths(root: Path) -> set[str]:
 # --------------------------------------------------------------------------- verdict
 
 
+def repo_packages(root: Path) -> set[str]:
+    """Top-level directories a `from <pkg> import ...` in this tree could name."""
+    return {p.name for p in root.iterdir()
+            if p.is_dir() and not p.name.startswith(".")
+            and p.name not in SKIP_DIR_PARTS and any(p.glob("*.py"))}
+
+
+def bootstrap_findings(root: Path) -> list[str]:
+    """Launched files whose package-qualified imports the launcher cannot resolve.
+
+    This closes an assumption `aliases` above states in its own docstring and never
+    checked: "the two import forms this tree actually uses: `from <pkg> import <mod>`
+    **after a `sys.path` bootstrap**". The census resolves that form statically, so a
+    launched file missing the bootstrap has its seams reported `wired` while the process
+    cannot start — a false *reached*, which is the one direction this tool exists to make
+    impossible. `memory/memory_node.py` was in exactly that state: `run_ec2.sh` launches
+    it as a file, so `sys.path[0]` is `memory/`, there is no `memory` package inside
+    `memory/`, and `from memory import profile` raised `ModuleNotFoundError` from every
+    working directory. The single writer had never run, and every offline test passed
+    because pytest puts the repo root on `sys.path` before importing anything.
+
+    Derived on both sides. The launched set comes from the runner's own table (`launched`,
+    the same table `check_deploy.sh` treats as the source of truth) and the package set
+    from the directories on disk, so a new node and a new top-level package are both
+    picked up without anyone adding a name here.
+    """
+    packages = repo_packages(root)
+    out: list[str] = []
+    examined = 0
+    for rel in launched(root):
+        path = root / rel
+        tree = parse(path, rel)
+        needed = sorted((n.lineno, n.module) for n in ast.walk(tree)
+                        if isinstance(n, ast.ImportFrom) and n.module and not n.level
+                        and n.module.split(".")[0] in packages)
+        if not needed:
+            continue
+        examined += 1
+        line, module = needed[0]
+        # A file at `pkg/node.py` is one directory down, so the root is `.parent.parent`.
+        wanted = BOOTSTRAP_ROOT + ".parent" * len(Path(rel).parts)
+        boots = [n.lineno for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and ast.unparse(n.func) == BOOTSTRAP_CALL
+                 and wanted in ast.unparse(n)]
+        if not boots:
+            out.append(
+                f"FAIL {rel} is launched by {RUNNER} and imports {module!r} at line "
+                f"{line}, but no {BOOTSTRAP_CALL} of {wanted} precedes it — sys.path[0] "
+                f"is {Path(rel).parent}/ when the runner launches a file, so this node "
+                f"raises ModuleNotFoundError before rclpy.init() and dies looking exactly "
+                f"like a node nobody started. The census resolves this import statically "
+                f"and would report the seams behind it as reached")
+        elif min(boots) > line:
+            out.append(
+                f"FAIL {rel} bootstraps sys.path at line {min(boots)} but already needs "
+                f"{module!r} at line {line} — an import runs when it is read, so a "
+                f"bootstrap below it is a bootstrap that never happens")
+    if not examined:
+        raise CensusError(
+            f"0 of the {len(launched(root))} files {RUNNER} launches use a "
+            f"package-qualified import, so this check examined nothing and reported "
+            f"clean — which is the same output as a tree where every bootstrap is "
+            f"present. Either the launch table stopped naming the nodes or the import "
+            f"style changed, and both mean this check needs rewriting rather than "
+            f"passing")
+    return out
+
+
 def findings(root: Path) -> list[str]:
-    """Every disagreement between the census and the manifest, in both directions."""
+    """Every disagreement between the census and the manifest, in both directions —
+
+    plus every launched file whose imports the census resolved and the launcher cannot.
+    That last family is not a manifest disagreement, and it is here rather than in a tool
+    of its own because it is the same claim under the same exit code: this census says
+    which seams the running robot reaches, and a node that cannot import is a node that
+    reaches none of them.
+    """
     seams = dict(census(root))
     rows = read_manifest(root)
     hands = standalone_paths(root)
-    out: list[str] = []
+    out: list[str] = bootstrap_findings(root)
 
     for seam, asym in sorted(seams.items()):
         if seam not in rows:

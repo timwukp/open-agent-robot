@@ -1,4 +1,5 @@
-"""T-N1 wiring census + T-N2 mutation liveness for infra/wiring_census.py.
+"""T-N1 wiring census + T-N2 mutation liveness + T-N3 launch bootstrap for
+infra/wiring_census.py.
 
 The census is a claim about which subsystems the running robot can reach, and it was
 written because every existing guard in this repo was green while four of the five
@@ -7,7 +8,7 @@ promises ran only under pytest. So the claim needs falsifying the same way
 then a named mutant per check with the specific finding it must provoke, then the
 census's own failure modes as exit 3.
 
-Two of the tests below are load-bearing beyond killing a mutant, and they are the
+Three of the tests below are load-bearing beyond killing a mutant, and they are the
 reason this file is longer than the census:
 
   `test_reachability_alone_loses_the_assemble_seam` states the hole differentially.
@@ -21,6 +22,14 @@ reason this file is longer than the census:
   census, because `body/body_node.py` reaches it with `from gestures import …` and
   every other node in the tree uses `from body import gestures`. Remove that one
   resolution and a wired module reads as dead.
+
+  `test_no_other_instrument_notices_a_node_that_cannot_start` is the false *reached*,
+  which is the one direction this tool exists to make impossible. Remove
+  `memory/memory_node.py`'s sys.path bootstrap — the state that file was in until
+  R1.1b, in which the single writer raised ModuleNotFoundError before `rclpy.init()`
+  on every boot — and reachability still resolves the import, the function instrument
+  still sees the calls, and the manifest still agrees. Drop `bootstrap_findings` and
+  the census reports that tree **green**, so the test asserts both halves.
 
 The two boundaries the census documents are tested on a synthetic tree rather than on
 this repo, and that is a measured statement about coverage, not a preference. Both
@@ -281,6 +290,44 @@ def _mut_uncalled_is_only_about_its_own_file(root: Path) -> None:
           "    called_anywhere = {name for name, _o, _k in call_of.get('memory/store.py', [])}")
 
 
+# ------------------------------------------------- the launch bootstrap (a third kind)
+#
+# These mutate a *launched node's own source* rather than the manifest or the census.
+# That is the only place the defect can live: the census resolved `from memory import
+# profile` statically and reported the seams behind it as reached, while the process it
+# claimed to describe raised ModuleNotFoundError before `rclpy.init()`. So the tree is
+# what has to be broken to prove the check reads it.
+
+WRITER = "memory/memory_node.py"
+BOOTSTRAP_LINE = "sys.path.insert(0, str(Path(__file__).resolve().parent.parent))"
+WRITER_IMPORTS = ("from memory import profile as pf  # noqa: E402\n"
+                  "from memory import store as st  # noqa: E402")
+
+
+def _mut_bootstrap_removed(root: Path) -> None:
+    """The state this file was actually in until R1.1b: the single writer, launched as a
+    file by run_ec2.sh, with no `memory` package inside `memory/` to import. Every
+    offline test still passed, because pytest puts the repo root on sys.path first."""
+    patch(root, WRITER, BOOTSTRAP_LINE + "\n", "")
+
+
+def _mut_bootstrap_below_the_import(root: Path) -> None:
+    """Present but useless. An import runs when it is read, so a bootstrap underneath it
+    fixes sys.path for a process that already died. A check that only asked "is the line
+    there" would call this tree clean, and the line is there."""
+    patch(root, WRITER, BOOTSTRAP_LINE + "\n\n" + WRITER_IMPORTS,
+          WRITER_IMPORTS + "\n\n" + BOOTSTRAP_LINE)
+
+
+def _mut_bootstrap_at_the_wrong_depth(root: Path) -> None:
+    """One `.parent` short — the shape of the line is right and it points at `memory/`,
+    which is the directory that was already on sys.path. This is what makes the depth a
+    derived quantity rather than a constant: the census computes it from how far down
+    the launch table says the file lives."""
+    patch(root, WRITER, BOOTSTRAP_LINE,
+          "sys.path.insert(0, str(Path(__file__).resolve().parent))")
+
+
 # name -> (mutation, the finding it must provoke). The second element matters as much
 # as the first: a mutant killed by some other check is still a surviving mutant for
 # the check it was written to test, and "exit != 0" cannot tell those apart.
@@ -314,6 +361,13 @@ MUTANTS = {
                                   "is class defect but its reason names no stage id"),
     "uncalled_is_only_about_its_own_file": (_mut_uncalled_is_only_about_its_own_file,
                                             "is uncalled"),
+    "bootstrap_removed": (_mut_bootstrap_removed,
+                          f"{WRITER} is launched by {RUNNER} and imports 'memory' at line"),
+    "bootstrap_below_the_import": (_mut_bootstrap_below_the_import,
+                                   "a bootstrap below it is a bootstrap that never happens"),
+    "bootstrap_at_the_wrong_depth": (
+        _mut_bootstrap_at_the_wrong_depth,
+        "no sys.path.insert of Path(__file__).resolve().parent.parent precedes it"),
 }
 
 
@@ -403,6 +457,59 @@ def test_the_file_instrument_cannot_see_the_dormant_guard_functions(repo_copy: P
         )
 
 
+def _drop_the_bootstrap_check(root: Path) -> None:
+    """Not a MUTANTS entry, for the same reason `_drop_the_unpassed_instrument` is not:
+    removing this check makes the *real* tree greener, not redder, so exit-code mutation
+    cannot see it. The loss has to be stated as a difference."""
+    patch(root, CENSUS, "    out: list[str] = bootstrap_findings(root)",
+          "    out: list[str] = []")
+
+
+@pytest.mark.mutation
+def test_no_other_instrument_notices_a_node_that_cannot_start(repo_copy: Path) -> None:
+    """The false *reached*, as a difference. This is the direction the census exists to
+    make impossible, and every other instrument in the file is blind to it.
+
+    With `memory/memory_node.py`'s bootstrap removed the tree is broken in the strongest
+    way this tool reports on — the single writer cannot import its own package, so it
+    dies before `rclpy.init()` — and yet reachability still resolves the import, the
+    function instrument still sees the calls, and the manifest still describes seams as
+    wired. Remove `bootstrap_findings` and the census goes *green* on that tree. So the
+    assertion is in two parts: red with the check, and green without it, because a red
+    that some other instrument would also have produced proves nothing about this one.
+    """
+    _mut_bootstrap_removed(repo_copy)
+    found = run_census(repo_copy)
+    assert found.returncode == 1, found.stdout + found.stderr
+    assert f"{WRITER} is launched by {RUNNER}" in failures(found)
+
+    _drop_the_bootstrap_check(repo_copy)
+    lost = run_census(repo_copy)
+    assert lost.returncode == 0, (
+        "some other instrument reported the broken tree, so this differential does not "
+        "isolate the bootstrap check:\n" + failures(lost)
+    )
+    assert census_findings(lost) == 0, failures(lost)
+    # And the census keeps calling the dead node's seams reached, which is the sentence
+    # worth having on the record: the manifest and the census agreed about a process
+    # that could not start.
+    report = lost.stdout + lost.stderr
+    assert f"{WRITER}\tunreached" not in report
+    assert "memory/profile.py\tunreached" not in report
+
+
+def test_a_bootstrap_check_that_examines_nothing_exits_3_not_0(repo_copy: Path) -> None:
+    """Zero is not a pass. `bootstrap_findings` returning `[]` has two causes — every
+    launched file bootstraps correctly, or the check found no package-qualified import to
+    check — and they print identically. Emptying the package set stands in for the real
+    ways that happens (the launch table stops naming nodes, or the import style changes),
+    and the census must refuse to grade rather than report clean."""
+    patch(repo_copy, CENSUS, "    packages = repo_packages(root)", "    packages = set()")
+    proc = run_census(repo_copy)
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    assert "examined nothing and reported" in failures(proc), failures(proc)
+
+
 # --------------------------------------------------- the documented boundaries, tested
 #
 # On a synthetic tree, because neither boundary is reachable in this repo — see the
@@ -414,6 +521,15 @@ SYNTH_ROW = ("app/lib.py::f(real=)\tunpassed\tpending_stage\tR9.9 is the synthet
              "and the seam is reviewed rather than unrowed\n")
 
 
+# The synthetic tree's `app/main.py` is launched as a file by its synthetic runner, so it
+# needs the same sys.path bootstrap a real node needs — `bootstrap_findings` reports it
+# otherwise, and reports it *correctly*: without this line the fixture describes a node
+# that raises ModuleNotFoundError. Written here rather than exempted, because a check
+# taught to skip synthetic trees would be a check with a hole shaped like a test fixture.
+SYNTH_BOOTSTRAP = ("import sys\nfrom pathlib import Path\n"
+                   "sys.path.insert(0, str(Path(__file__).resolve().parent.parent))\n")
+
+
 def _synthetic(root: Path, lib: str, rows: str = SYNTH_ROW,
                main: str = "from app import lib\nlib.f()\n") -> Path:
     (root / "infra").mkdir(parents=True, exist_ok=True)
@@ -421,7 +537,7 @@ def _synthetic(root: Path, lib: str, rows: str = SYNTH_ROW,
     (root / "infra" / "run_ec2.sh").write_text("gateway|python3 app/main.py\n")
     (root / "infra" / "dormant_seams.tsv").write_text("# synthetic\n" + rows)
     (root / "infra" / "standalone_entrypoints.tsv").write_text("# synthetic, no rows\n")
-    (root / "app" / "main.py").write_text(main)
+    (root / "app" / "main.py").write_text(SYNTH_BOOTSTRAP + main)
     (root / "app" / "lib.py").write_text(lib)
     return root
 

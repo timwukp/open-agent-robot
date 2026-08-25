@@ -31,10 +31,18 @@ English version: [`docs/design.md`](design.md)
 而這個落差是**由閘導出的,不是靠人記得**:`infra/wiring_census.py` 讀每一個 python 檔案,
 報出每一個只有 `pytest` 到得了的接縫,並且把結果拿去跟 `infra/dormant_seams.tsv` **兩個方向**對帳。
 
+R1.1b 給這個閘加了**第四個粒度**,而理由值得寫在這裡而不只寫在測試設計裡:前三個問的都是
+**「這個接縫是不是死的」**,沒有一個問得出**「這份普查描述的那個行程,起得來嗎」**。
+`aliases()` 自己的 docstring 寫著它解析的是 `from <pkg> import <mod>`「**在一次 `sys.path`
+bootstrap 之後**」,而它從來沒有檢查那個 bootstrap 在不在。`memory_node` 就正好在那個狀態
+—— 見下面對承諾 2 的更正 —— 所以普查把它後面的接縫全部報成 reached,而那個節點每次開機都在
+`rclpy.init()` 之前就死了。一個假的 *dormant* 只讓讀者浪費一個下午;一個假的 *reached* 是
+這支工具唯一必須不可能發生的方向,所以 `bootstrap_findings` 從 runner 自己的啟動表**導出**
+這個要求,不再假設它成立。
 | # | 承諾 | 到得了哪 | 證據 |
 |---|---|---|---|
 | 1 | **它聽得到、看得到、說得出話、會動 —— 而且會揭露自己是機器** | **端到端跑得起來。** | 展示手冊 [`docs/DEMO.md`](DEMO.md);Art 50(1) 由 `gateway/ws_gateway.py:105-119` 經 `safety/disclosure.py` 從 `/speech/say` 說出來,**路徑上沒有 LLM**,由 `tests/test_disclosure.py`(T-E1)斷言 |
-| 2 | **它記得你** | **卡片接上了,episode 還沒有。** R1.1 讓 `agent_node` 訂閱 latched 的 `/memory/profile`,並把 `card=` 傳進 `assemble()`,所以一份**人手寫的**檔案卡片到得了跑著的機器人的提示,而一個**早於卡片**的回合會留下一筆稽核紀錄。**寫入**記憶下游的東西全部還在休眠:`memory/recall.py`、`memory/consolidate.py`、`memory/salience.py` 在執行期一行都不跑,`memory/segment.py` 沒有任何節點載入 —— 所以這個機器人記得的,只有人類打進 `profile.json` 的東西。 | 接上的那一半:`tests/test_profile_wiring.py`,而 `/memory/profile` 在 `infra/graph_gaps.tsv` 已經沒有列了。休眠的那一半:`infra/dormant_seams.tsv` 的 `assemble(recall=)` 與 `memory/segment.py`。由 R1.3、R1.4 接上 |
+| 2 | **它記得你** | **卡片接上了,episode 還沒有。** *R1.1b 更正:* 在整個 R1.1 期間,這一列對**原始碼**是真的,對**跑著的機器人**是假的。`memory/memory_node.py` —— 卡片的發佈者、也是那個唯一的寫入者 —— 被 `infra/run_ec2.sh` 當**檔案**啟動,所以 `sys.path[0]` 是 `memory/`,而 `memory/` 裡面沒有 `memory` package:`from memory import profile` 在**任何**工作目錄下都在 `rclpy.init()` 之前 `ModuleNotFoundError`,每次開機都是。另外四個被啟動的節點每一個都帶著那行 `sys.path.insert`,只有這一個沒有。所以什麼都沒被發佈、`audit.jsonl` 什麼都沒被追加,而 `run_ec2.sh status` 顯示的是一個**看起來就像沒人啟動過**的節點。R1.1b 補上那一行,並補上那個把它導出來的閘。R1.1 讓 `agent_node` 訂閱 latched 的 `/memory/profile`,並把 `card=` 傳進 `assemble()`,所以一份**人手寫的**檔案卡片到得了跑著的機器人的提示,而一個**早於卡片**的回合會留下一筆稽核紀錄。**寫入**記憶下游的東西全部還在休眠:`memory/recall.py`、`memory/consolidate.py`、`memory/salience.py` 在執行期一行都不跑,`memory/segment.py` 沒有任何節點載入 —— 所以這個機器人記得的,只有人類打進 `profile.json` 的東西。 | 接上的那一半:`tests/test_profile_wiring.py`,而 `/memory/profile` 在 `infra/graph_gaps.tsv` 已經沒有列了。休眠的那一半:`infra/dormant_seams.tsv` 的 `assemble(recall=)` 與 `memory/segment.py`。由 R1.3、R1.4 接上 |
 | 3 | **你可以叫它忘記** | **辨識得出,但不會動作。** `safety/guard.py:403 forget_request()` 已經能辨識中文與英文的刪除請求,而且**沒有呼叫者** —— 所以你可以叫這個機器人忘記,它不會。`memory/erase.py` 沒有任何節點載入。 | `infra/dormant_seams.tsv` 兩列;辨識器本身由 `tests/test_guard.py:125` 與 `:543` 覆蓋。由 R1.5 接上 |
 | 4 | **它不能被說服越過自己的邊界** | **一半接上,而休眠的那一半是輸出側。** 輸入側是活的:憲法每一回合都載入,L0 停止反射是確定性的。`safety/output_guard.py` —— 檢查機器人**即將說出口**的那一側 —— 沒有任何節點載入,而活著的 `safety/guard.py` 裡有兩個函式在 `agent_node` 裡有第二份、較弱的 inline 實作(見 §3 的 D1)。 | 活著的那一半:`tests/test_guard.py`(它引用 T-D1..T-D4)。休眠的那一半 repo 自己用資料寫下來了:`agent/tools.py` 的 `EGRESS[SAY]` 那一列帶 `enforcement=NOT_WIRED`,而 `infra/dormant_seams.tsv` 有兩列 `defect`。由 R1.6 接上 |
 | 5 | **它真的會跟你對局** | **接上了,但每次開機都失憶。** `game/opponent.py` 有在跑,`game_node` 也把每一局的結果發到 `/game/rps_round` —— 而**沒有任何節點訂閱它**。所以轉移表每次開機都是空的,而 ledger 自己的算術說:**前 ~120 局退回 1/3 硬幣**(81 個 order-2 context)。 | `infra/graph_gaps.tsv` 裡成對的 `/game/rps_round` + `/memory/rps_table`,而那個閘要求**兩端同時接上或都不接**。由 R1.2 接上 |
@@ -137,7 +145,7 @@ source=OUTPUT、每個語言組 n ≥ 30、整套跑兩次。結果:**p50 415.8�
 
 | # | 不變量 | 它在哪裡被創造 | 失去它時什麼會紅 |
 |---|---|---|---|
-| I1 | **單一寫入者。** 只有 `memory_node` 落盤,而且只經過 `memory/store.py`。任何「什麼可以被寫」的保證都住在那個唯一的寫入者裡,永不住在產生那筆紀錄的模組裡 | `memory/store.py:1`;原則寫在 `:265-267` | `tests/test_store.py`(它引用 T-A1..T-A4)、`tests/test_erase.py`。理由原始碼裡就寫著:*「一個在讀取端強制的保證只是一句註解;在唯一的寫入者裡強制,它對從來沒聽過 profile 模組的代碼也成立」* —— 九個節點裡任何一個都能直接碰到 store,所以一個「自己不去呼叫寫入 API」的生產者只約束得到走它的呼叫者 |
+| I1 | **單一寫入者。** *(R1.1b:這條不變量從來沒有被威脅過,而那是一種錯的安心 —— 在 R1.1b 之前那個寫入者根本沒有在跑,所以沒有任何人寫過任何東西。一條「只有 X 可以做這件事」的不變量,會被一個**起不來的 X** 空洞地滿足,而這個 repo 裡沒有任何測試看得見這件事,因為 pytest 在 import 任何東西之前就先把 repo root 放上了 `sys.path`。)* 只有 `memory_node` 落盤,而且只經過 `memory/store.py`。任何「什麼可以被寫」的保證都住在那個唯一的寫入者裡,永不住在產生那筆紀錄的模組裡 | `memory/store.py:1`;原則寫在 `:265-267` | `tests/test_store.py`(它引用 T-A1..T-A4)、`tests/test_erase.py`。理由原始碼裡就寫著:*「一個在讀取端強制的保證只是一句註解;在唯一的寫入者裡強制,它對從來沒聽過 profile 模組的代碼也成立」* —— 九個節點裡任何一個都能直接碰到 store,所以一個「自己不去呼叫寫入 API」的生產者只約束得到走它的呼叫者 |
 | I2 | **任何會讓身體動起來的東西,都是事後解析的文字標籤 —— 永不是一個工具。** 這裡**確實有**一個真的工具迴路(I8),而 `[gesture:*]` / `[game:start]` 是**刻意**被留在迴路外的:模型把它們寫在散文裡,而它們只在回覆已經存在之後才被派送與剝除。所以我們的 schema 從來不對模型廣告致動器,而 `\w+` 的捕捉表達不出冒號,那正是把 `chant` 的參數形式放在模型伸手範圍之外的東西 | `agent/agent_node.py:264-269`;這個主張在 `agent/tools.py` 的 `EGRESS[GESTURE]` 那一列被寫成**資料** | `tests/test_guard.py::test_the_whitelist_has_exactly_one_creator` 與 `::test_a_thousand_random_tags_yield_only_whitelisted_names`(T-D3);`tests/test_tools.py` 斷言 egress 表每一列內部自洽。**要注意的地方寫在下面的 D1**:那兩個 guard 測試釘的是 `safety/guard.py`,也就是標籤解析器**休眠的**那一份 |
 | I3 | **記憶只能從資料柵欄裡進提示。** 被檢索回來的文字進一個具名區塊,那個區塊沒辦法宣稱自己是指令;一個值落在哪個區域,是由**它從哪個參數進來**決定的,所以呼叫者手上沒有任何一個引數能把被檢索的文字送進指令區 | `safety/guard.py:191 data_region` 對柵欄名稱碰撞是**拒絕**而不是化解;名字來自 `agent/context.py:114 BLOCKS`,不來自任何呼叫者 | `tests/test_context.py`(T-C5 的注入半段):一句從 store 檢索回來的惡意句子只能出現在柵欄裡面,而指令區必須跟「沒有記憶」的基線**逐位元相同** |
 | I4 | **L0 永不經過語言模型。** 停止詞、節拍、白名單都是確定性的 | `game/game_node.py`、`body/gestures.py:86 GESTURES` | T-D2 兩側:靜態上反射模組不得 import `boto3`;動態上 `tests/test_guard.py:776` 用一個「任何屬性存取都拋異常」的 `boto3` 替身跑停止路徑,而它仍然必須停 |
