@@ -1,6 +1,5 @@
-100644 memory/salience.py
-100644 memory/store.py
-100644 tests/test_salience.py
+100644 memory/segment.py
+100644 tests/test_segment.py
 100644 docs/test-design.md
 100644 README.md
 100644 README.zh-TW.md
