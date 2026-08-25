@@ -1,13 +1,20 @@
-# T-C5 的注入半段:提示組裝器 + 把接縫接上部署路徑。
+# S6 的離線半段:三支排序臂 + 拒絕下結論的 harness(T-F6)。
 # 這份清單同時是 infra/redact_scan.py 的檔案清單 —— 它只讀這裡列出的檔案,
 # 所以一份過期的清單會讓脫敏閘對錯的分母印出 0 findings。
-100644 agent/context.py
-100644 agent/agent_node.py
-100644 safety/guard.py
-100644 tests/test_context.py
-# 這個 PR 第一次在清單裡寫註解,而那一行讓脫敏閘 exit 3 —— 兩個讀者對格式不同意。
-100755 infra/redact_scan.py
-100644 tests/test_redact_scan.py
+100644 memory/rank.py
+# 100644, not 100755: it has no shebang and is run as `python3 memory/rank_harness.py`,
+# and the mode in this list has to be the mode on disk or the push silently changes it.
+100644 memory/rank_harness.py
+100644 tests/test_rank.py
+# 九個 ref 生產者收成四個創造者:S6 的臂要把命中接回帶 salience 的事件記錄,
+# 而那個 join key 之前有兩個生產模組各自拼字串。recall 與 erase 一起改,
+# 兩邊的測試也一起改,否則「兩個讀者一個格式」的教訓會在這裡重演。
+100644 memory/recall.py
+100644 tests/test_recall.py
+100644 memory/erase.py
+100644 tests/test_erase.py
+# rank_harness.py 是手動跑的 entrypoint,豁免要寫成一行可審查的宣告。
+100644 infra/standalone_entrypoints.tsv
 100644 docs/test-design.md
 100644 README.md
 100644 README.zh-TW.md

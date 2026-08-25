@@ -35,6 +35,7 @@ win, which presents as a mutant that mysteriously survives.
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import sys
@@ -226,6 +227,137 @@ def test_the_registry_is_five_paths_because_the_plan_says_five() -> None:
     arrives together with an edit to the criterion instead of silently under it.
     """
     assert len(rc.PATHS) == 5, sorted(rc.PATHS)
+
+
+# ================================================= the join key, one creator each
+#
+# `Hit.ref` is read by three consumers that never call the code that wrote it:
+# `deletion_findings` reports it, `memory/erase.py` **rebuilds** card and rps refs to
+# say which rows a deletion removed, and S6's ranking arms join a hit back to the
+# event carrying its salience. Before `event_ref`/`episode_ref`/`card_ref`/`rps_ref`
+# existed the format had nine producers across two production modules — the shape of
+# the `.push/files.txt` divergence, where two writers of one format agreed only for as
+# long as nobody edited one of them, and the reader that noticed was whichever one
+# happened to compare.
+#
+# So the assertion below is not "the nine known sites call the creators": a list of
+# nine sites cannot notice a tenth. It is a census over every production file for the
+# *pattern* — an f-string joining an `*_ARTIFACT` name to a `#` — with the four
+# creators as the only permitted matches. A new producer written inline is then a red
+# test rather than a divergence waiting for a consumer to find it.
+def _inline_ref_sites(source: str, label: str) -> list[str]:
+    """Every f-string in `source` that joins an `*_ARTIFACT` name to a literal `#`.
+
+    Reported as `label:lineno` strings so a failure names the file and the line. The
+    detector deliberately looks for the *shape* rather than for the four artifact
+    constants by name: a sixth artifact added by a future node would otherwise be
+    outside the census on the day it was introduced.
+    """
+    sites = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.JoinedStr):
+            continue
+        names, text = [], ""
+        for part in node.values:
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                text += part.value
+            elif isinstance(part, ast.FormattedValue):
+                inner = part.value
+                if isinstance(inner, ast.Name):
+                    names.append(inner.id)
+                elif isinstance(inner, ast.Attribute):
+                    names.append(inner.attr)
+        if "#" in text and any(n.endswith("_ARTIFACT") for n in names):
+            sites.append(f"{label}:{node.lineno}")
+    return sites
+
+
+def _production_python_files() -> list[Path]:
+    skip = {"tests", ".push", ".git", "docs", "web"}
+    return sorted(p for p in REPO_ROOT.rglob("*.py")
+                  if not (set(p.relative_to(REPO_ROOT).parts) & skip))
+
+
+def _creator_line_span() -> range:
+    """The line range covering the four ref creators in `memory/recall.py`.
+
+    Derived from the AST rather than written down, so moving or renaming a creator
+    moves the exemption with it instead of silently widening it.
+    """
+    names = {"event_ref", "episode_ref", "card_ref", "rps_ref"}
+    spans = [(n.lineno, n.end_lineno) for n in ast.parse(RECALL_PY.read_text(
+        encoding="utf-8")).body
+        if isinstance(n, ast.FunctionDef) and n.name in names]
+    assert len(spans) == len(names), f"expected {sorted(names)}, found {spans}"
+    return range(min(s for s, _ in spans), max(e for _, e in spans) + 1)
+
+
+def test_the_ref_detector_finds_the_creators_themselves() -> None:
+    """Non-vacuity, first. A census that matches nothing proves nothing about none.
+
+    The four creators are the only f-strings of this shape that are *supposed* to
+    exist, so they are also the positive control: if the detector cannot see them it
+    cannot see a tenth producer either, and the census below would be four lines of
+    green that never looked at anything.
+    """
+    span = _creator_line_span()
+    found = _inline_ref_sites(RECALL_PY.read_text(encoding="utf-8"), "recall.py")
+    inside = [s for s in found if int(s.split(":")[1]) in span]
+    assert len(inside) == 4, f"detector saw {found} in creator span {span}"
+
+
+def test_no_production_file_builds_a_hit_ref_outside_a_creator() -> None:
+    files = _production_python_files()
+    assert len(files) >= 10, (
+        f"the census read {len(files)} production files; §6.0 rule 5 makes a scan "
+        "that read almost nothing an error, not a pass")
+    span = _creator_line_span()
+    offenders = []
+    for path in files:
+        label = str(path.relative_to(REPO_ROOT))
+        for site in _inline_ref_sites(path.read_text(encoding="utf-8"), label):
+            if label == "memory/recall.py" and int(site.split(":")[1]) in span:
+                continue                      # the creators are the exemption
+            offenders.append(site)
+    assert offenders == [], (
+        f"{offenders} builds a Hit.ref inline. Three consumers depend on that "
+        "string's exact spelling and none of them call this code; use "
+        "recall.event_ref / episode_ref / card_ref / rps_ref so a drift has to be "
+        "a change to the four functions the tests point at")
+
+
+@pytest.mark.mutation
+def test_the_census_catches_a_tenth_producer_written_inline() -> None:
+    """The mutant is the change this test exists to refuse: a new call site that
+    formats the ref itself. Applied to `erase.py`, because that is the module that
+    already rebuilds refs to compare against what `recall.py` emits — the divergence
+    would be silent there in exactly the way T-J10's was."""
+    src = (REPO_ROOT / "memory" / "erase.py").read_text(encoding="utf-8")
+    anchor = "            refs.append(recall.rps_ref(i))\n"
+    assert src.count(anchor) == 1, "mutant anchor moved in erase.py"
+    assert _inline_ref_sites(src, "erase.py") == [], "erase.py is clean today"
+    mutant = src.replace(
+        anchor, '            refs.append(f"{recall.RPS_ARTIFACT}#{i}")\n')
+    assert _inline_ref_sites(mutant, "erase.py"), (
+        "the census cannot see a producer written inline in erase.py, so the test "
+        "above would stay green while the two modules drifted apart")
+
+
+def test_the_creators_address_events_by_seq_and_cards_by_source() -> None:
+    """The two ref shapes whose spelling carries information a consumer acts on.
+
+    An event ref naming a list index instead of a store seq would still parse and
+    still join — against the wrong event, silently, and only for stores where a
+    deletion had already shifted the indices. And a card fact citing two episodes
+    produces one hit per source: without the episode in the ref, deleting one of the
+    two reads as removing the whole row and deleting the other as removing nothing.
+    """
+    assert rc.event_ref(7) == f"{rc.EVENTS_ARTIFACT}#7"
+    assert rc.episode_ref(E1) == f"{rc.EPISODES_ARTIFACT}#{E1}"
+    assert rc.rps_ref(2) == f"{rc.RPS_ARTIFACT}#2"
+    assert rc.card_ref(1) == f"{rc.CARD_ARTIFACT}#1"
+    assert rc.card_ref(1, E1) == f"{rc.CARD_ARTIFACT}#1@{E1}"
+    assert rc.card_ref(1, E1) != rc.card_ref(1, E2) != rc.card_ref(1)
 
 
 def test_every_path_declares_at_least_one_artifact() -> None:

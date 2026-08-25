@@ -676,10 +676,10 @@ def test_the_rps_mutant_that_deletes_unattributed_rounds_goes_red(tmp_path):
     """Removing what it cannot prove is E's. Over-deletion, the unrepairable side."""
     module = load_mutant(tmp_path, (
         "        if eid == episode:\n"
-        "            refs.append(f\"{recall.RPS_ARTIFACT}#{i}\")\n"
+        "            refs.append(recall.rps_ref(i))\n"
         "            continue",
         "        if eid == episode or eid is None:\n"
-        "            refs.append(f\"{recall.RPS_ARTIFACT}#{i}\")\n"
+        "            refs.append(recall.rps_ref(i))\n"
         "            continue"))
     store = build(tmp_path)
     try:
