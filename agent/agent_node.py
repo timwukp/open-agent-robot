@@ -14,6 +14,12 @@ model — whether a skill's instructions belong in this turn. Only the tiny L1 i
 attached to the user turn as data, and the model pulls deeper files through the
 read_skill_file tool. See skills/loader.py for why the gate is not an LLM judge.
 
+Tools: `agent/tools.py` owns the closed registry — the Converse spec, the hop and
+effect budgets, and the six outcomes of one invocation. This node builds no tool
+spec of its own and maps no outcome to a boolean beyond the two values Converse's
+`status` field has; the outcome itself goes to the log, because "policy refused"
+and "the server was unreachable" must not read the same afterwards.
+
 The system prompt is **not** written here. `agent/context.py` owns it — the base
 prompt, the constitution, and every fenced data block — and this node holds exactly
 one line of the result. Until that move the prompt was `SYSTEM + l1_index(...)`,
@@ -39,6 +45,7 @@ from std_msgs.msg import String
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent import context  # noqa: E402
+from agent import tools  # noqa: E402
 from safety import guard  # noqa: E402
 from skills import loader  # noqa: E402
 
@@ -211,13 +218,13 @@ class AgentNode(Node):
                 "inferenceConfig": {"maxTokens": 1000},
             }
             if hits:
-                kwargs["toolConfig"] = loader.TOOL_CONFIG
+                kwargs["toolConfig"] = tools.tool_config()
 
             resp = self.brt.converse(**kwargs)
             # Bounded: a model that keeps asking for files would otherwise hold the
             # conversation open indefinitely. On the last hop the tool is dropped,
             # which forces an answer instead of a truncated turn.
-            for hop in range(loader.MAX_TOOL_HOPS):
+            for hop in range(tools.MAX_TOOL_HOPS):
                 if resp.get("stopReason") != "tool_use":
                     break
                 out = resp["output"]["message"]
@@ -227,18 +234,21 @@ class AgentNode(Node):
                     use = block.get("toolUse")
                     if not use:
                         continue
-                    body, ok = loader.run_tool(use)
+                    inv = tools.invoke(use)
+                    # The outcome goes in the log, not just success/error: Converse's
+                    # status field has two values, and collapsing six into it is how
+                    # a refusal and an unreachable server become the same log line.
                     self.get_logger().info(
-                        f"read_skill_file {use.get('input')} -> "
-                        f"{'ok' if ok else body[:80]}")
+                        f"tool {inv.name} {use.get('input')} -> {inv.outcome}"
+                        f"{'' if inv.outcome == tools.OK else ': ' + inv.text[:80]}")
                     results.append({"toolResult": {
                         "toolUseId": use["toolUseId"],
-                        "content": [{"text": body}],
-                        "status": "success" if ok else "error"}})
+                        "content": [{"text": inv.text}],
+                        "status": "success" if inv.outcome == tools.OK else "error"}})
                 if not results:
                     break
                 messages.append({"role": "user", "content": results})
-                if hop == loader.MAX_TOOL_HOPS - 1:
+                if hop == tools.MAX_TOOL_HOPS - 1:
                     kwargs.pop("toolConfig", None)
                 resp = self.brt.converse(**kwargs)
             # Claude 5 may prepend reasoning blocks — join every text block

@@ -43,8 +43,11 @@ L1_MAX_CHARS = 200
 # unbounded prompt. These are budget ceilings, not security boundaries.
 L2_MAX_BYTES = 24_000
 L3_MAX_BYTES = 32_000
-# How many read_skill_file hops one turn may take before we stop and answer.
-MAX_TOOL_HOPS = 3
+# The tool surface — the name, the Converse spec, the hop bound and the dispatch —
+# lives in agent/tools.py, not here. `read_skill_file` below is the executor and
+# the path fence (T-I3); who may call it, under what name, and how many times is a
+# question about every tool rather than about skills, and answering it here made
+# this module the place a second tool would be quietly appended to.
 
 TRIGGERS_FILENAME = "triggers.tsv"
 SKILL_FILENAME = "SKILL.md"
@@ -309,50 +312,3 @@ def skill_block(skill: Skill, root: Path = SKILLS_ROOT) -> str:
         f"{skill.dirname}/… 底下的檔案,需要細節時用 read_skill_file 讀,"
         f"路徑要含 \"{skill.dirname}/\" 前綴。)"
     )
-
-
-TOOL_NAME = "read_skill_file"
-
-TOOL_CONFIG = {
-    "tools": [{
-        "toolSpec": {
-            "name": TOOL_NAME,
-            "description": (
-                "Read one file from the robot's skills directory. `path` is relative "
-                "to skills/ and must include the skill directory, e.g. "
-                "'critical-thinking/methods/bias-detection.md'. Use this to follow a "
-                "routing table in a loaded SKILL.md. Never guess paths: read only what "
-                "the skill's own routing table names."
-            ),
-            "inputSchema": {"json": {
-                "type": "object",
-                "properties": {"path": {
-                    "type": "string",
-                    "description": "path relative to skills/, e.g. 'critical-thinking/SKILL.md'",
-                }},
-                "required": ["path"],
-            }},
-        }
-    }]
-}
-
-
-def run_tool(tool_use: dict, root: Path = SKILLS_ROOT) -> tuple[str, bool]:
-    """Execute one toolUse block. Returns (text, ok).
-
-    Lives here rather than in agent_node so the refusal path is covered by the
-    offline suite: this is the function a path-traversal attempt actually reaches.
-    """
-    name = tool_use.get("name")
-    if name != TOOL_NAME:
-        return (f"unknown tool {name!r}", False)
-    args = tool_use.get("input") or {}
-    if not isinstance(args, dict):
-        return ("tool input must be an object", False)
-    try:
-        return (read_skill_file(str(args.get("path", "")), root=root), True)
-    except SkillPathError as exc:
-        # The refusal reason goes back to the model on purpose: it is a routing
-        # mistake far more often than an attack, and a silent empty result would
-        # make it retry the same wrong path.
-        return (f"refused: {exc}", False)

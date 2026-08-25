@@ -1,35 +1,35 @@
-# S7 的離線半段:句級異步輸出守衛 + 凍結紅隊集(T-G1..T-G4)。
+# S8 的離線半段:工具邊界 —— 封閉註冊表、導出的 dispatch、六種結果、出口普查
+# (T-L1..T-L5)。MCP client、OAuth 與權杖儲存是這一階段的在機半段,不在這裡。
+#
 # 這份清單同時是 infra/redact_scan.py 的檔案清單 —— 它只讀這裡列出的檔案,
 # 所以一份過期的清單會讓脫敏閘對錯的分母印出 0 findings。
 #
 # 清單本身由**與 base tree 對帳**產生,不是憑記憶列的:把工作樹每個檔案的
-# `git hash-object` 跟 s6-rank-ablation 的 tree 比一次,新增與變更兩份名單就是這裡。
-# 對出來的差集裡另外五個檔案刻意不在清單上:daemon/miniaudio.h 與
+# `git hash-object` 跟 s7-output-guard 的 tree(134 個 blob,truncated=false)
+# 比一次,新增兩個、變更六個,就是下面八行;另外兩行是推送機制自己。
+# 對出來的差集裡有四個檔案刻意不在清單上:daemon/miniaudio.h 與
 # daemon/oar-daemon 是廠商標頭與建置產物,infra/local.env 與 infra/ssh_config
-# 帶帳號專屬值且 git-ignored,.push/message.txt 是這次推送的訊息本體。
+# 帶帳號專屬值且 git-ignored。.push/message.txt 是這次推送的訊息本體。
 #
-# 100644, not 100755: output_guard_harness.py 有 shebang 但是以
-# `python3 safety/output_guard_harness.py --guardrail-id …` 執行的,
-# 而清單裡的模式必須等於磁碟上的模式,否則推送會靜靜地改掉它。
-100644 safety/output_guard.py
-100644 safety/output_guard_harness.py
-100644 tests/test_output_guard.py
-# 凍結集進 tests/fixtures/,因為 T-J3 的 manifest 已經在那裡守著 hash 與
-# 「多一個沒登錄的檔案就紅」;把它擺在守衛旁邊等於重寫一遍同樣的保護。
-100644 tests/fixtures/redteam.jsonl
-100644 tests/fixtures.tsv
-100644 tests/fixtures/README.md
-# /speech/say 的鍵普查從兩份各自的 AST 走訪收成一份共用的導出:S7 把 `id` 的
-# 預設值搬進 voices.request_id() 之後,只讀 tts_node.py 的普查導出 {cache,text} ——
-# 介面鍵「不見了」跟「被移除了」在那份普查裡長得一模一樣。
-100644 tests/say_payload.py
-100644 tests/test_disclosure.py
-100644 tests/test_guard.py
-# 話語 id 的唯一創造者:退路 id 是構造出來的,所以退路命名空間與保留命名空間不相交。
-100644 speech/voices.py
-100644 speech/tts_node.py
-# output_guard_harness.py 是手動跑的 entrypoint,豁免要寫成一行可審查的宣告。
-100644 infra/standalone_entrypoints.tsv
+# 對帳同時比了模式:這八個檔案在 base tree 與磁碟上都是 100644,沒有
+# --allow-mode-change。寫錯模式會在每一項檢查全綠的情況下剝掉執行位元。
+
+# 工具邊界本體:純模組,零 ROS、零 boto3、零網路、零時鐘。
+# 註冊表是封閉的,dispatch 由模組命名空間導出而不是第二份 name→function dict ——
+# 一份會過期的第二讀者,在這裡過期的形式是「模型可以呼叫但沒人宣告過的函式」。
+100644 agent/tools.py
+100644 tests/test_tools.py
+
+# agent_node 記 outcome 而不是只記 success/error:Converse 的 status 只有兩個值,
+# 把六個折進去就是讓「拒絕」與「伺服器連不上」變成同一行日誌。
+100644 agent/agent_node.py
+
+# 工具面從 skills/loader.py 拆走:TOOL_NAME / TOOL_CONFIG / run_tool / MAX_TOOL_HOPS
+# 四個都刪掉。誰可以呼叫、用什麼名字、呼叫幾次,是關於「每一個工具」的問題而不是
+# 關於技能的問題,把答案寫在這裡就讓這個模組成為第二個工具會被靜靜追加的地方。
+100644 skills/loader.py
+100644 tests/test_skills_loader.py
+
 100644 docs/test-design.md
 100644 README.md
 100644 README.zh-TW.md

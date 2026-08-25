@@ -436,40 +436,21 @@ def test_mutant_string_check_instead_of_resolution_lets_the_symlink_out(tmp_path
 
 
 # ================================================== the tool the model can call
-def test_run_tool_reads_a_file_and_reports_success() -> None:
-    text, ok = loader.run_tool({"name": "read_skill_file",
-                                "input": {"path": "critical-thinking/SKILL.md"}})
-    assert ok and "Critical Thinking" in text
+def test_the_loader_no_longer_owns_a_tool_surface() -> None:
+    """S8 moved the name, the Converse spec, the hop bound and the dispatch into
+    `agent/tools.py`; what stays here is `read_skill_file` — the executor and the
+    path fence of T-I3, tested above.
 
-
-def test_run_tool_turns_a_refusal_into_a_result_not_an_exception() -> None:
-    """A raised exception inside the Converse tool loop would abandon the turn; the
-    model needs to be told it asked for the wrong path and try the right one."""
-    text, ok = loader.run_tool({"name": "read_skill_file",
-                                "input": {"path": "../../etc/passwd"}})
-    assert not ok and text.startswith("refused:")
-
-
-def test_run_tool_rejects_an_unknown_tool_name() -> None:
-    text, ok = loader.run_tool({"name": "rm_rf", "input": {}})
-    assert not ok and "unknown tool" in text
-
-
-def test_run_tool_survives_a_malformed_tool_use_block() -> None:
-    for block in ({"name": "read_skill_file"},
-                  {"name": "read_skill_file", "input": "not-an-object"},
-                  {"name": "read_skill_file", "input": {"path": None}}):
-        text, ok = loader.run_tool(block)
-        assert not ok and text
-
-
-def test_tool_config_matches_what_converse_requires() -> None:
-    spec = loader.TOOL_CONFIG["tools"][0]["toolSpec"]
-    assert spec["name"] == loader.TOOL_NAME
-    schema = spec["inputSchema"]["json"]
-    assert schema["type"] == "object"
-    assert schema["required"] == ["path"]
-    assert "path" in schema["properties"]
+    The split is not tidying. While this module owned `TOOL_CONFIG`, "which tools
+    can the model reach" was answered by the module that knows about skills, so a
+    second tool would have been appended next to the first one and the whole tool
+    surface would have kept the name of one subsystem. The invocation contract and
+    its six outcomes now live in `tests/test_tools.py` (T-L1..T-L5).
+    """
+    for gone in ("TOOL_CONFIG", "TOOL_NAME", "run_tool", "MAX_TOOL_HOPS"):
+        assert not hasattr(loader, gone), (
+            f"loader.{gone} is back; agent/tools.py is supposed to be the only "
+            f"creator of the tool surface")
 
 
 # ====================================================== the wiring in agent_node
@@ -477,7 +458,7 @@ def test_agent_node_gates_on_the_loader_and_not_on_the_model() -> None:
     src = AGENT_NODE.read_text()
     assert "loader.match(" in src, "agent_node must ask the deterministic gate"
     assert "loader.l1_index(" in src, "the L1 index must reach the system prompt"
-    assert "loader.MAX_TOOL_HOPS" in src, "the tool loop must be bounded"
+    assert "tools.MAX_TOOL_HOPS" in src, "the tool loop must be bounded"
 
 
 def test_the_skill_body_never_enters_the_system_block() -> None:
