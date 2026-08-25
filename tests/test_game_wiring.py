@@ -227,6 +227,70 @@ def disk_calls(methods: dict[str, ast.FunctionDef]) -> set[str]:
 
 
 # --------------------------------------------------------------- T-H6 structural
+def node_states(tree: ast.Module, methods: dict[str, ast.FunctionDef]) -> set[str]:
+    """Every value this node ever assigns to `self.state`, derived from the source.
+
+    The plan (T-D1) asked for the state set to be derived rather than typed out,
+    because a hand-written list cannot notice a state added next month. It is still
+    derived — but note what it is now used *for*. It is no longer a matrix of
+    per-state stop tests: the reflex moved to `safety.guard.stop_requested`, whose
+    only argument is the text, so it cannot behave differently per state and four
+    parametrised cases would be four copies of one assertion. The set's job here is
+    to prove the derivation is non-trivial and to make the comparison-free claim
+    below meaningful: if this returned one state, "the stop path reads no state"
+    would be true and vacuous.
+    """
+    states = set()
+    for fn in methods.values():
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)
+                    and any(isinstance(t, ast.Attribute) and t.attr == "state"
+                            for t in node.targets)):
+                states.add(node.value.value)
+    return states
+
+
+def reads_state(node: ast.AST) -> bool:
+    return any(isinstance(n, ast.Attribute) and n.attr in {"state", "cooldown_until"}
+               for n in ast.walk(node))
+
+
+def stop_gate_position(methods: dict[str, ast.FunctionDef]) -> tuple[int, int]:
+    """(index of the stop dispatch in `on_asr`, index of the first state read).
+
+    Both are top-level statement positions, so "the reflex is checked first" is an
+    ordering on integers rather than a shape somebody eyeballed. A missing landmark
+    returns -1 and the assertion says which one, because a renamed method would
+    otherwise make this pass by finding nothing.
+    """
+    on_asr = methods["on_asr"]
+    stop = stmt_index(on_asr, lambda n: (
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "stop_requested"))
+    state = stmt_index(on_asr, reads_state)
+    return stop, state
+
+
+def stop_commits_before_returning(methods: dict[str, ast.FunctionDef]) -> bool:
+    """Does `stop_game` leave the game stopped even on the repeated call?
+
+    ASR partials repeat an utterance 2-4x, so `stop_game` suppresses the *second*
+    announcement. The trap is the order: the early `return` must come after the
+    state has already been set to idle. Move it up and a repeated "停" leaves the
+    game running while the audit log records a stop — the worst of both.
+    """
+    fn = methods["stop_game"]
+    idle = stmt_index(fn, lambda n: (
+        isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Attribute) and t.attr == "state" for t in n.targets)
+        and isinstance(n.value, ast.Constant) and n.value.value == "idle"))
+    ret = stmt_index(fn, lambda n: isinstance(n, ast.Return))
+    assert idle >= 0 and ret >= 0, f"landmark missing in stop_game: {idle=} {ret=}"
+    return idle < ret
+
+
+
 def test_model_touchpoints_are_exactly_the_four_named_methods():
     """Derived from the source, so a fifth toucher fails without anyone editing me."""
     found = touchpoints(METHODS)
@@ -510,6 +574,60 @@ def test_judge_refuses_a_non_move():
             rps.judge("rock", bad)
 
 
+
+# ------------------------------------------------------- T-D1: the stop reflex
+def test_the_node_has_more_than_one_state_so_the_claim_below_is_not_vacuous():
+    """Derived from the source (T-D1). Also the premise check for the next test:
+    a state machine with one state makes "state-independent" trivially true."""
+    states = node_states(TREE, METHODS)
+    assert states >= {"idle", "inviting", "await_chant", "chanting"}, states
+    assert len(states) >= 4, states
+
+
+def test_the_stop_reflex_is_dispatched_before_the_node_reads_any_state():
+    """T-D1's node half. `guard.stop_requested` cannot see the state — that is
+    proven in tests/test_guard.py — so all that is left to check here is that the
+    node does not put a state check in front of it. Positions, not prose."""
+    stop, state = stop_gate_position(METHODS)
+    assert stop >= 0, "no stop_requested call in on_asr — the reflex was renamed"
+    assert state >= 0, "control: on_asr does read the state somewhere"
+    assert stop < state, (
+        f"on_asr reads self.state/cooldown at statement {state} before dispatching "
+        f"stop at {stop} — the reflex would be state-dependent again")
+
+
+def test_the_reflex_reaches_stop_game_and_stops_reading_the_utterance():
+    """The dispatch has to both stop the game and return: falling through would let
+    the same utterance also match a trigger phrase ("停" plus a garbled 剪刀 in one
+    ASR partial), restarting what was just stopped."""
+    on_asr = METHODS["on_asr"]
+    stop, _ = stop_gate_position(METHODS)
+    guarded = on_asr.body[stop]
+    called = {n.func.attr for n in ast.walk(guarded)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+    assert "stop_game" in called, called
+    assert any(isinstance(n, ast.Return) for n in ast.walk(guarded)), \
+        "the stop branch does not return — the utterance keeps being parsed"
+
+
+def test_a_repeated_stop_leaves_the_game_stopped():
+    """Idempotence, as an ordering: state goes idle before the early return."""
+    assert stop_commits_before_returning(METHODS)
+
+
+def test_the_node_holds_no_second_copy_of_the_stop_words():
+    """The other half of one-creator (tests/test_guard.py derives the tree-wide
+    census). Here: the node must reach the reflex through the guard module, not
+    inline a literal it happened to remember."""
+    creators = [n for n in ast.walk(TREE) if isinstance(n, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "STOP_WORDS"
+                        for t in n.targets)]
+    assert creators == [], "game_node.py assigns STOP_WORDS again"
+    imported = {a.name for n in ast.walk(TREE) if isinstance(n, ast.ImportFrom)
+                and n.module == "safety" for a in n.names}
+    assert "guard" in imported, imported
+
+
 # ------------------------------------------------------------------ T-J4 mutants
 # Each row is (id, anchor, replacement, the check that must break). The check is
 # the same function the corresponding test above calls, so a mutant surviving means
@@ -541,6 +659,10 @@ def test_unmutated_control():
     assert not adopts_inside_try(methods)
     assert topic_qos(methods)[0]["/memory/rps_table"].id == "LATCHED"
     assert not disk_calls(methods)
+    stop, state = stop_gate_position(methods)
+    assert 0 <= stop < state
+    assert stop_commits_before_returning(methods)
+    assert len(node_states(tree, methods)) >= 4
 
 
 @pytest.mark.mutation
@@ -625,3 +747,49 @@ def test_mutant_second_writer_in_the_game_node():
         "        self.pub_round.publish(String(data=json.dumps(")
     assert "_learn:write_text" in disk_calls(methods), \
         "a filesystem write appeared in _learn and the single-writer check missed it"
+
+
+@pytest.mark.mutation
+def test_mutant_the_stop_reflex_put_behind_a_state_check():
+    """MUTANT: the state/cooldown guard moves above the stop dispatch — the exact
+    shape of the runaway-game incident, where 停 was ignored in some states."""
+    _, methods = mutate(
+        """        # STOP is a hard reflex: checked before this method reads self.state or the
+        # cooldown at all, and decided by a function that cannot see either.
+        if guard.stop_requested(text):""",
+        """        if self.state != "idle" or time.monotonic() < self.cooldown_until:
+            return
+        if guard.stop_requested(text):""")
+    stop, state = stop_gate_position(methods)
+    assert not (stop < state), \
+        "a state check now precedes the stop dispatch and the ordering check agreed"
+
+
+@pytest.mark.mutation
+def test_mutant_a_repeated_stop_returns_before_committing():
+    """MUTANT: the idempotence early-return moves above `self.state = "idle"`, so
+    the second of two ASR partials leaves the game running."""
+    _, methods = mutate(
+        """        self.state = "idle"
+        self.cooldown_until = time.monotonic() + 15.0   # long quiet period
+        if already_stopped:
+            return""",
+        """        if already_stopped:
+            return
+        self.state = "idle"
+        self.cooldown_until = time.monotonic() + 15.0   # long quiet period""")
+    assert not stop_commits_before_returning(methods), \
+        "the return moved above the state commit and the ordering check agreed"
+
+
+@pytest.mark.mutation
+def test_mutant_the_stop_branch_falls_through():
+    """MUTANT: drop the `return`, so one garbled utterance can stop and restart."""
+    _, methods = mutate(
+        """            self.stop_game()
+            return""",
+        "            self.stop_game()")
+    stop, _ = stop_gate_position(methods)
+    guarded = methods["on_asr"].body[stop]
+    assert not any(isinstance(n, ast.Return) for n in ast.walk(guarded)), \
+        "the fall-through mutant still has a return — the anchor matched the wrong branch"

@@ -179,8 +179,14 @@ done <<< "$ROWS"
 # The other direction of "no deploy path = no component", and the one that catches
 # the defect at its source: speech/yue_server.py was a finished entrypoint that
 # nothing started. Discovered from the tree, never from a remembered node list.
-ENTRYPOINTS=$(cd "$ROOT" && grep -rl '^if __name__ ==' --include='*.py' . \
-              | sed 's#^\./##' | grep -v '^tests/' | sort)
+#
+# The discovery used to be `grep -rl '^if __name__ =='`, which could not see the
+# worse case: a script with NO guard runs its work on import, so it is more of an
+# entrypoint than a guarded file. `.push/push.py` was exactly that and this check
+# called the tree clean. infra/entrypoints.py answers the question with an AST walk
+# (guard OR import-time work) and exits 3 rather than printing an empty list.
+ENTRYPOINTS=$(cd "$ROOT" && python3 infra/entrypoints.py .) || \
+  die "infra/entrypoints.py could not classify the tree (rc=$?) — a discovery step that cannot run must not report clean"
 n_entry=$(printf '%s\n' "$ENTRYPOINTS" | grep -c . || true)
 [ "$n_entry" -gt 0 ] || die "found 0 python entrypoints in $ROOT — the scan read nothing, which is an error, not a pass"
 

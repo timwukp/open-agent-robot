@@ -36,13 +36,25 @@ instead is a gate: `tests/test_guard.py` derives the keys `speech/tts_node.py`
 reads from that request and requires them to match a census, so the first change
 that gives the model an amplitude to ask for goes red and has to argue for it.
 
-The stop reflex itself (`STOP_WORDS`) still lives in `game/game_node.py`, which
-imports rclpy. It is deliberately **not** copied here: two encodings of the same
-reflex with nothing forcing them to agree is the defect that `WINS`/`BEATS` was,
-and one stop-word list that disagrees with the other is a robot that stops in one
-state and not another. Collapsing it into this module means editing `game_node.py`,
-which is in the open PR stack — so T-D1 and the runtime half of T-D2 land with
-that wiring, not here. `tests/test_guard.py` records the gap by name.
+**Why the stop reflex is a pure function of the utterance and nothing else.**
+`stop_requested()` used to be a `STOP_WORDS` tuple inside `game/game_node.py`,
+where it could only be reached through rclpy. Moving it here is not tidiness. The
+plan's T-D1 asks that STOP work in *every* state, and a per-state test can only
+ever cover the states someone remembered to list. A function whose only parameter
+is the text **cannot** consult the state — so the property holds by construction
+for the four states the node has today and for the fifth one somebody adds next
+month, and what the tests check instead is the much smaller claim that the node
+calls it before it looks at `self.state`. That is derived from the node's AST, so
+a new state cannot quietly escape it.
+
+Note also the deliberate asymmetry with `forget_request()` twenty lines below.
+That one guards negation ("別忘記" must not delete) because a false positive
+destroys something. This one does not, and must not: a stop that fires when the
+person said "不要停" costs one interrupted game, while the failure that actually
+happened on this robot was the *other* direction — the LLM chaining games while
+"停" was ignored. Recall over precision, stated out loud, with a test asserting
+the false positive so that a future "improvement" adding negation handling has to
+argue with it rather than slip in as a cleanup.
 """
 from __future__ import annotations
 
@@ -299,6 +311,32 @@ def gesture_findings(reply: str) -> tuple[list[str], list[str]]:
 def spoken_text(reply: str) -> str:
     """The reply with action tags removed — what actually goes to TTS."""
     return _STRIP_TAGS.sub("", reply).strip()
+
+
+# ----------------------------------------------------------------- stop reflex
+# L0: this decision never reaches the LLM, and never reaches the network. It is a
+# substring test on purpose. Streaming ASR garbles and repeats tokens (observed:
+# 石头剪刀石石剪刀), so anchoring to a clause boundary the way the deletion patterns
+# do would drop real stops — and unlike a deletion, a stop is cheap to get wrong in
+# the accepting direction and expensive to get wrong in the refusing direction.
+#
+# Both scripts of each word are listed because the ASR emits either depending on
+# the engine, and "别玩"/"別玩" differing by one codepoint is exactly the kind of
+# gap that shows up once, on the robot, in front of somebody.
+STOP_WORDS = ("停", "不玩", "别玩", "別玩", "暫停", "暂停", "结束", "結束",
+              "stop", "enough", "quit", "no more")
+
+
+def stop_requested(text: str) -> bool:
+    """True if this utterance is a request to stop, from the text alone.
+
+    Takes no state, no clock and no client, which is the whole point: T-D1's
+    "works in every state" is a property of the signature here rather than a list
+    of states in a test. Case-folded here rather than at the call site so that a
+    second caller cannot forget to.
+    """
+    lowered = text.lower()
+    return any(word in lowered for word in STOP_WORDS)
 
 
 # ------------------------------------------------------------- deletion requests

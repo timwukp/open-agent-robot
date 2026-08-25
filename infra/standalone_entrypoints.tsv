@@ -20,3 +20,5 @@ safety/token_cost_harness.py	one-off T-K5/T-F5 measurement against Bedrock, run 
 safety/guardrail_latency_harness.py	one-off T-K3 apply_guardrail latency measurement in our own region, run by hand with --guardrail-id; writes docs/evidence/track-c/guardrail-latency.json which tests/test_guardrail_latency.py asserts against
 infra/redact_scan.py	redaction scan over an explicit push file list, run by hand before every Git Data API push; three exit codes (0/1/3) and tested by tests/test_redact_scan.py
 infra/doc_counts.py	cross-checks the case counts quoted in docs/test-design.md and both READMEs against pytest --collect-only, run by hand before a push; three exit codes (0 agree / 1 findings / 3 cannot check) and tested by tests/test_doc_counts.py
+infra/entrypoints.py	library imported by tests/test_entrypoints.py; its __main__ is the CLI that check 8 of this very guard consumes, so it is launched by the guard rather than by the runner
+.push/push_branch.py	the Git Data API pusher for this repo's never-git-push rule, run by hand with --base/--branch; developer tooling that is never deployed to the instance, and tested by tests/test_push_branch.py
