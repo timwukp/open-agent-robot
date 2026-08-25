@@ -6,7 +6,7 @@
 
 閱讀順序:先讀 §0(為什麼這樣分級),再跳到你要動的那個子系統。
 
-**這份文件描述的是設計,不是既成事實。** 今天真正跑起來的是 1401 個案例,落在
+**這份文件描述的是設計,不是既成事實。** 今天真正跑起來的是 1445 個案例,落在
 §2.A(持久化與單寫者,含 T-A5 唯讀種子與 T-A9 配對律)、
 §2.B 的 T-B1/T-B2/T-B4 與 T-B3 的不變量半段(確定性切分)、
 §2.C 的 T-C1 的 goal 半段(`why.goal` 封閉枚舉)、上一輪的 T-C2(N ≥ 2 個獨立 episode)與 T-C3(provenance 完整性)、
@@ -27,7 +27,7 @@
 | `tests/test_guardrail_latency.py` | 31 | T-K3(L3 選到 7 個:6 個具名突變體 + 無突變對照) |
 | `tests/test_disclosure.py` | 39 | **T-E1**、**T-E3 的結構半段**、`/speech/say` 的鍵普查(讀者集合由 `tts_node` 的 import 遞移導出,含一個三跳的構造案例當正控)(L3 選到 9 個:8 個具名突變體 + 無突變對照) |
 | `tests/test_voices.py` | 33 | **T-E2**(引擎普查 × 兩條時長路徑的全交叉積 + `tts_node` 的唯一創造者;L3 選到 4 個:3 個具名突變體 + 無突變對照) |
-| `tests/test_meta.py` | 45 | T-J2(在沙箱子行程裡證明收集下限)、T-J5、**T-J7** |
+| `tests/test_meta.py` | 46 | T-J2(在沙箱子行程裡證明收集下限)、T-J5、**T-J7** |
 | `tests/test_context.py` | 43 | **T-C5 的注入半段**(真 `Retriever` 召回的敵意句子只出現在柵欄內、指令區對無記憶基線逐位元相同)、**提示組裝的部署路徑**(AST:節點自己不得持有提示文字、`system_text` 唯一來源、憲法載入不得被 `try` 包住);柵欄名的封閉集與 `data_region` 的碰撞拒絕(L3 選到 8 個:7 個具名突變體 + 無突變對照) |
 | `tests/test_push_branch.py` | 44 | **§7 的推送機制本身**(三方 sha、read-back、會說謊的 API 替身,以及**檔案模式**對工作樹可執行位元與 base tree 兩邊的比對;L3 選到 5 個:4 個具名突變體 + 無突變對照) |
 | `tests/test_entrypoints.py` | 29 | **T-J1 的發現半段**(AST:`__main__` 閘 or import 期工作;L3 選到 3 個:2 個具名突變體 + 無突變對照) |
@@ -44,6 +44,7 @@
 | `tests/test_store.py` | 48 | T-A1..T-A4、T-A6、T-A7、**T-A10**(`rewrite_stream`,T-C4 的 store 側半段:逐 seq 刪除 + in-flight 記錄不被連坐 + `audit` 不可改寫 + 重開機的序號恢復;L3 選到 15 個案例,共 18 個具名突變體 —— 14 個案例各一個,位置檢查那一案在同一個測試裡連續套四個 —— 無突變對照就在位置那一案裡) |
 | `tests/test_erase.py` | 50 | **T-C4 的刪除動作本身**(tombstone 先寫後刪、五條路徑的普查由 `rc.paths()` 導出、卡片兩個分支兩種殺法、未歸屬回合保留並回報、保留期的邊界而非門檻;L3 選到 6 個:5 個具名突變體 + 無突變對照) |
 | `tests/test_doc_counts.py` | 23 | **T-J8**(L3 選到 6 個:5 個具名突變體 + 無突變對照) |
+| `tests/test_architecture.py` | 43 | **§2.M(圖與普查必須互相對帳)**(`docs/workflow.md` 的每個 Mermaid 區塊 × `infra/ros_census.py` 的 10 節點 / 21 主題 / 50 邊,兩個方向都查;`docs/architecture.svg` 的動畫在 `@supports` 之外不得先動起來;`infra/graph_gaps.tsv` 的類別封閉集與雙向律;版面幾何由 `infra/arch_render.py` 重建後逐位元比對,門檻 20 px 乾淨 / 21 px 必抓)(L3 選到 22 個:19 個具名突變體 + 3 個無突變對照——文件 / SVG / 缺口清單各一,因為三組突變體打的是三個不同的檢查族,共用一個對照會讓其中兩族的 harness 壞掉時仍然報綠;另有 7 個「一個版面一個缺陷」的手搭佈局與一個乾淨對照不掛 marker,它們不改原始碼,是餵給 `geometry_findings` 的輸入) |
 | `tests/test_measure_stats.py` | 23 | §2.K 兩支 harness 共用的統計(L3 選到 7 個:6 個具名突變體 + 無突變對照) |
 | `tests/test_deploy_path.py` | 26 | T-J1(3 個對照 + 4 個 exit-3 + 行為檢查)、T-J4(17 個具名突變體 + 一個把發現步驟的洞寫成差值的對照) |
 | `tests/test_redact_scan.py` | 22 | T-J6(8 個具名突變體 + 無突變對照 + 3 個 exit-3 對照)、**T-J10**(清單的兩個讀者必須同意它列了什麼;L3 多選到 2 個:1 個具名突變體 + 無突變對照)|
@@ -51,22 +52,24 @@
 | `tests/test_doubles.py` | 16 | §1 的替身與注入式時鐘,含「會說謊 vs 回聲」那對並列證明 |
 
 `test_meta.py` 的離線 import 掃描沒有一份模組清單:參數直接來自
-`TESTS_DIR.glob("*.py")`(`tests/test_meta.py:85`),所以今天 `tests/` 裡的 **33 個模組
-恰好對應 33 個案例**,S2.5 多出來的兩個是 `tests/test_disclosure.py` 與
+`TESTS_DIR.glob("*.py")`(`tests/test_meta.py:85`),所以今天 `tests/` 裡的 **34 個模組
+恰好對應 34 個案例**,S2.5 多出來的兩個是 `tests/test_disclosure.py` 與
 `tests/test_voices.py`,S3 多出來的一個是 `tests/test_profile.py`,S3.5 多出來的一個是
 `tests/test_salience.py`,S4 多出來的一個是 `tests/test_segment.py`,S4.5 多出來的一個是
 `tests/test_why.py`,S5 離線半段的鞏固那一邊多出來的一個是 `tests/test_consolidate.py`,
 檢索那一邊多出來的一個是 `tests/test_recall.py`。這正是「**由目錄導出,
 不寫死清單**」的收益——一份手寫的模組清單不會注意到新名字,而這裡的可觀察後果是一個會
-自己長大的數字,不是一句宣稱:這兩個檔案我一個字都沒改 `test_meta.py`,它自己就從 31
-變成 33,而 T-J8 立刻指出本節的 31 過期了;S3 再加一個檔案,同樣一個字都沒改就變成 34,
+自己長大的數字,不是一句宣稱:這兩個檔案我一個字都沒改 `test_meta.py`,它的**收集案例數**
+(不是上面那個掃描子集)自己就從 31 變成 33,而 T-J8 立刻指出本節的 31 過期了;S3 再加一個檔案,同樣一個字都沒改就變成 34,
 S3.5 變成 35,S4 變成 36,S4.5 變成 37,S5 的鞏固那一邊變成 38,檢索那一邊變成 39,
 刪除那一邊(`tests/test_erase.py`)變成 40,注入那一邊
 (`tests/test_context.py`)變成 41,排序那一邊(`tests/test_rank.py`)變成 42,而這一輪的
 S7 一次加了兩個:守衛自己的 `tests/test_output_guard.py`,以及 `tests/say_payload.py` ——
 `/speech/say` 的鍵普查從 `tests/test_disclosure.py` 與 `tests/test_guard.py` 各自一份 AST
 走訪,搬成兩邊共用的一份,所以掃描變成 44;而這一輪的 S8 加的 `tests/test_tools.py`
-把它變成 45。**掃描的參數是 `*.py` 而不是 `test_*.py`**,
+把它變成 45;而這一輪的 `tests/test_architecture.py` 把它變成 46,掃描的那一半同時從
+33 個模組變成 34 個——這兩個數字沿著同一條 `glob` 一起動,而 §0 表格裡的 45 是我手打的,
+所以動的時候只有 T-J8 會出聲。**掃描的參數是 `*.py` 而不是 `test_*.py`**,
 這件事在這一輪剛好有價值:一個放在 `tests/` 裡的非測試輔助模組如果 import 了 `boto3`,
 它一樣會被這條掃描抓到。
 
@@ -79,7 +82,7 @@ S2.5 這一輪它還做了第二件事,而那件更有價值:T-E3 的瀏覽器�
 一行可審查的宣告,不是守衛裡一句「這裡不用看」的註解。
 
 上表「L3 選到 N 個」的數字全部由 `pytest -m mutation --collect-only -q` 逐檔印出
-(2026-08-24 量測,全套 257 個案例),不是手數的;T-J7 保證沒有第 258 個躲在標記外面,
+(2026-08-25 量測,全套 279 個案例),不是手數的;T-J7 保證沒有第 280 個躲在標記外面,
 而 **T-J8 保證上面每一個數字都是導出來的**——包括本段自己引用的那兩個。
 
 G 各節的**在機半段**(T-G1 的裁決→靜音 400 ms、T-G2 的首句差值 50 ms、T-G4 的真跑)、
@@ -1006,7 +1009,7 @@ L1 一改就紅,逼人重跑量測而不是讓舊數字繼續掛在那裡。
 | T-J1 | 部署路徑 | `infra/check_deploy.sh`:**執行** runner(`OAR_DRY=1`)而非解析它 | 啟動集合 == 回報集合;每條執行路徑存在或有活的 producer;每個 entrypoint 有人啟動或被明文豁免 | **已實作** |
 | T-J2 | 收集下限 | 逐模組收集數;掃檔數 | 任一模組收集 0 案例 → **非零退出**;`-k`/`-m` 時自動讓位 | **已實作** |
 | T-J3 | fixture 完整性 | 大小下限 + 行數下限 + sha256,登記在 `tests/fixtures.tsv` | 截斷、等長改寫、未登記的新檔,三者都紅 | **已實作** |
-| T-J4 | 突變 harness | 逐條套用具名突變體 + 無突變對照 | 每個突變體被**它該殺的那個檢查**殺掉;對照必須綠 | **已實作**;`pytest -m mutation` 在 2026-08-24 選到 **257 個案例**,分佈見檔首表格 |
+| T-J4 | 突變 harness | 逐條套用具名突變體 + 無突變對照 | 每個突變體被**它該殺的那個檢查**殺掉;對照必須綠 | **已實作**;`pytest -m mutation` 在 2026-08-25 選到 **279 個案例**,分佈見檔首表格 |
 | T-J5 | C daemon 陳舊 | 原始碼 mtime vs 執行檔 mtime;執行中行程的啟動時間 vs 執行檔 mtime | 執行檔不得舊於原始碼;執行中的行程不得舊於磁碟上的執行檔 | **已實作** |
 | T-J6 | 推送前脫敏 | `infra/redact_scan.py` 掃**即將成為 blob 的那份檔案清單**;8 個模式類各一個具名突變體 | 每個模式類被自己那條斷言抓到(比對**類名**而非只比 rc);無突變對照必須乾淨;清單缺失/為空/列到不存在的路徑 → **exit 3** | **已實作** |
 | T-J7 | **每個具名突變體都真的在 L3 裡** | 由 AST **推導**「突變體施加器」(改寫原始碼文字 `.replace` **且**把結果變回程式 `importlib`/`ast.parse`/`compile`),再要求呼叫它的測試帶 `mutation` marker | 0 個未標記;施加器所在模組數 ≥ 4 且突變測試數 ≥ 25(掃到太少視為偵測器瞎了,不是合規) | **實作時新增**(見下方) |
@@ -1266,14 +1269,101 @@ OAuth 2.1 的 PKCE 與 RFC 8707 `resource`、RFC 9728 發現)、token 的落盤(
 
 ---
 
+### M. 圖與普查(`docs/architecture.svg` 與 `docs/workflow.md`)
+
+一張圖是一句關於系統的主張,而在這一輪之前,它是這個 repo 裡**唯一一句沒有任何東西
+核對過**的主張——而且是新讀者最先讀到的那一句。兩張圖各說一半:`architecture.svg` 畫
+**常態形狀**(10 個節點、21 個 topic、50 條邊,全部由 `infra/ros_census.py` 生成,而它
+執行 `OAR_DRY=1 infra/run_ec2.sh start-all` 而不是解析一份清單),`docs/workflow.md` 畫
+**序列**(10 張 Mermaid 圖:一個回合從耳朵到嘴巴、看的那條車道、把已經出口的聲音攔下來、
+單寫者在總線上與在磁碟上、刪除的級聯、`game_node` 的狀態、工具邊界的六個結果、
+模型的輸出能碰到哪裡)。
+
+`tests/test_architecture.py` 的 43 個案例分成九項,而**每一項都跑兩個方向**:
+
+| ID | 測試項 | 方法 | 通過標準 | 突變體 |
+|---|---|---|---|---|
+| T-M1 | 圖與普查對帳 | 對每張圖抓 topic token 與節點檔名,與 `census()` 的集合對稱差 (D) | 普查裡有而圖上沒有 → 紅;圖上有而普查裡沒有 → 也紅 | `topic_renamed_in_the_chart`(改一個字元)、`topic_dropped_from_every_chart`、`node_file_dropped` |
+| T-M2 | 圖裡指名的路徑存在 | 正則抓 `xxx/yyy.py` 形狀,逐一 `exists()` (D) | 0 個不存在 | `path_that_does_not_exist` |
+| T-M3 | 每個 Mermaid 區塊合法且**自足** | 圍籬數必須是偶數;圖種在封閉集 `{flowchart TD, flowchart LR, sequenceDiagram, stateDiagram-v2}`;**邊上用到的每個 id 必須在同一個區塊裡被賦予標籤** (D) | 三項皆 0 finding | `unterminated_fence`、`undeclared_diagram_kind`、`undeclared_id_in_block` |
+| T-M4 | 這份圖文件不得引用總數 | 抓「N 個案例 / N 個突變體」形狀 (D) | 0 個——因為 `infra/doc_counts.py` 只守 `docs/test-design.md` 與兩份 README,`workflow.md` 引用一個數字等於**引用一個沒人核對的數字** | `unguarded_total_quoted` |
+| T-M5 | render 記錄完整且在天花板內 | 讀 `docs/evidence/mermaid-render.json`,比對區塊數、逐塊 `parsed`/`rendered`、寬度上限,並要求它**保留第一版草稿的寬度**當對照 (D) | 10/10 解析、10/10 繪出、0 error、最大寬度 1498 ≤ **1500 px**;草稿的 `[3141, 2305, 1900, 3576, 1275, 2994, 1049]` 必須還在檔案裡 | 記錄少一塊、寬度超頂、或把草稿刪掉 → 紅 |
+| T-M6 | SVG 動畫的六項檢查,每一項都是一個量到過的真缺陷 | 純文字檢查:`@supports (offset-path: …)` 的閘存在、**它的引數是瀏覽器接受的 path**(引號內非空且以 moveto 開頭)、`@keyframes` **不在**閘裡面、`.pkt/.dead` 在**大括號深度 0** 有 `opacity: 0` 的底態、`prefers-reduced-motion` 存在、被動畫的 `circle` 不得同時帶 `cx`/`cy` (D) | 6 項皆 0 finding | `supports_gate_removed`、`supports_argument_emptied`、`keyframes_moved_inside_supports`、`base_opacity_removed`、`reduced_motion_removed`、`cx_cy_back_on_an_animated_circle` |
+| T-M9 | 動畫證據與實際出貨的那個字串一致 | `docs/evidence/architecture-animation.json` 記的 `as_shipped` 閘必須出現在 SVG 裡;驅動時間軸的樣本裡至少要有一個點**在路徑中段且不透明** (D) | 兩者皆成立,而且記錄必須自己寫明「GitHub 那一趟是人工的」 | 生成器改了閘而記錄沒改 → 紅;記錄退化成一份凍結時間軸的樣本(全部 `0%`)→ 紅 |
+| T-M7 | 缺口清單兩個方向 + 封閉類別集 | `infra/graph_gaps.tsv` 的 7 行 × `Topic.dead_end`/`.orphan` (D) | 真的斷頭而沒有行 → 紅;已接好卻留著行 → 也紅;`class` ∉ `{external, pending, defect, unused}` → 紅;`reason` 短到只是聳肩 → 紅;`/game/rps_round` 與 `/memory/rps_table` 這一對必須**兩端一起數** | `row_deleted_for_a_real_dead_end`、`stale_row_for_a_wired_topic`、`class_outside_the_closed_set`、`asymmetry_direction_flipped`、`reason_reduced_to_a_shrug` |
+| T-M8 | 版面幾何 | `infra/arch_render.py` **重建**後與 committed SVG 逐位元比對;`geometry_findings` 對 7 個「一個版面一個缺陷」的手搭佈局 + 一個乾淨對照;再把真實佈局的每個框**放大 21 px** (D) | 重建位元相同;7 個缺陷各被自己那條抓到、乾淨對照必須綠;真實佈局 **+20 px 乾淨、+21 px 必抓** | 連線交叉、連線穿過無關的框、框重疊、框出畫布(右/下/負原點)、線段出畫布 |
+
+L3 從這一節選到 **21 個案例:18 個具名突變體 + 3 個無突變對照**。三個對照而不是一個,
+是因為三組突變體打的是三個不同的檢查族(文件 / SVG / 缺口清單);共用一個對照的話,
+其中兩族的 harness 壞掉時整節仍然報綠。另外 8 個手搭佈局不掛 `mutation` marker——
+它們不改任何原始碼,是餵給 `geometry_findings` 的**輸入**,不是突變體。
+
+**這一輪學到的四件事,寫在數字旁邊:**
+
+**一、一張會解析的圖仍然可以不能讀。** 第一版草稿的 7 個區塊**全部**解析成功、
+**全部**繪出、0 個 error——而 §1 是 3141 px 寬,有一棵決策子樹被畫到「裝著它兄弟節點的
+subgraph」外面,還有邊沿著整個畫布高度蛇行。GitHub 的檔案視圖內容欄約 880 px,而縮放
+會一起縮標籤:3141 px 下一個 14 px 的標籤大約渲染成 **4 px**。所以「解析成功」不是
+oracle,**寬度**才是,而其餘的缺陷是人看 PNG 看出來的。修法不是調參數,是承認**根因是
+在一張圖裡混了兩種圖**:程序與 topic 的資料流圖(`architecture.svg` 已經在畫)和一個
+回合的決策流,兩者的版面約束互相衝突。改成線性 TD 決策鏈、topic 只當邊標籤、
+**標籤是圖說不是解釋**(理由搬到圖下方的散文),最大寬度從 3576 掉到 **1498**。
+
+**二、Mermaid 把沒宣告的 id 畫成一個標著裸 id 的方框,而且不回報任何錯誤。**
+第 5 個區塊引用了 `memory`,而那個 id 只在第 4 個區塊宣告過。沒有 parse error、
+沒有 warning——它就畫了一個標籤是 `memory` 的框。這是**只有繪出來才看得到、
+任何 parse 都不會報**的缺陷,所以它變成 T-M3 的第三條:每個區塊自足。
+
+**三、一個動了的點不等於一個走在它路線上的點,而一個「有閘」的閘不等於一個會開的閘。**
+`@keyframes` 巢在 `@supports` 裡面會解析、會列在 `cssRules` 裡、`animation-name` 也算得
+出來,但**不會動**(Chrome 141,5.6 秒內 14 個點一個都沒移動)——只有「賦予名字」的那些
+規則該放進支援查詢裡。而 offset 變換錨在使用者空間原點,所以一個被動畫的 `circle` 上的
+`cx`/`cy` 是**疊加**在路徑點上的(量到 `getBBox` (575,474) 對 `getBoundingClientRect`
+(1154,952))。這一段的第三個量測是**推送之後**在 Chrome 151 上做的,而它比前兩個更陰:
+`CSS.supports('offset-path', 'path(""))` 在 Chrome 151 是 **false**,而
+`path("M 0 0 L 1 1")` 是 **true**。`path("")` 正是每一份特徵偵測範例的寫法——
+用它寫的閘會在一個**完全支援**這個特性的瀏覽器上關上,每個點就停在 `opacity: 0`,
+圖靜靜地變成靜態圖,而這個檔案裡原本每一條檢查都還是綠的:閘在、巢對、底態在。
+所以現在檢查的是**閘的引數**,不只是閘的存在(T-M6 第二條 + `supports_argument_emptied`)。
+三條都是純文字檢查,因為離線套件裡沒有瀏覽器。
+
+**四、突變門檻要二分出來,而且要來自被檢查的那個量。** 把每個框放大 14 px,
+**沒有任何判決改變**;20 px → 0 個 finding,21 px → 2 個,22 px → 3 個,23 px → 9 個。
+所以測試同時斷言**兩半**(20 乾淨、21 必抓),否則一個對任何輸入都開火的檢查也能通過。
+而 20 px 這個數字來自 `meta["rects"]` 裡最近的一對框(`disk`/`cloud`),它和瀏覽器那一趟
+量到的 11.5 px「文字到框的最小空隙」是**兩個不同的量**,不能互相借用。
+
+**這一節沒有測到什麼,同樣寫在數字旁邊:** 離線套件裡**沒有瀏覽器、沒有 node**,
+所以像素是**引用**而不是重新量測——`docs/evidence/mermaid-render.json` 是那一趟真的
+Mermaid 11 + Chromium 的記錄,而 T-M5 檢查的是「這份引用自己前後一致」而不是「今天的
+渲染器還是這個寬度」。`tallest_edge_frac_of_canvas` 是**記錄,不是閘**:一個共用的
+提早退出終點合法地會產生一條貫穿全高的邊(第 8 塊的 `REFUSED` 0.711、第 7 塊的停止轉移
+0.712),閘住它會禁止正確的圖,而且**抓不到真正的缺陷**——真正抓到的是寬度。
+動畫真的動起來、以及 `prefers-reduced-motion` 真的靜下來,只有在真瀏覽器裡驗過一次
+(`docs/evidence/architecture-animation.json`,Chromium 151,T-M9 斷言那份記錄引用的閘
+字串真的出現在出貨的 SVG 裡);離線的那一半只斷言「讓它成為可能」的那個 CSS 結構。
+
+而那一趟本身有兩件**沒量到**:第一,`document.timeline.currentTime` 與每一個
+`Animation.currentTime` 在等了 3 秒之後都還是 **0**——自動化環境根本不推進動畫時間軸,
+所以相隔 2.5 秒的兩張截圖回來是**位元相同**的(md5 `ba1ba56eb748` 兩次都一樣)。
+那量到的是 harness 而不是圖:一個凍住的時間軸和一個壞掉的動畫,長得是同兩張截圖。
+主張是靠**明確設定 `Animation.currentTime`** 再讀位置救回來的,而那證明的是「這份 CSS 會
+產生位移」,不是「一個真的觀看者會播它」。第二,GitHub 自己的 SVG 檢視器把檔案渲染成
+`<img src=raw…svg>` 放在 `viewscreen.githubusercontent.com` ——**另一個 origin**,
+所以頁面裡什麼都檢查不到。GitHub 到底播不播,只能由人打開 `docs/architecture.svg` 看,
+它列在 §3 的 **L5**,不在這裡當成已驗證。
+
+---
+
 ## 3. 分層執行
 
 | 層 | 內容 | 何時 | 需要 |
 |---|---|---|---|
-| **L1** 單元 + property | A、B、C、D1–D4、**D6、D7**、E1–E2、H1、H3、H5、**H6(結構閘)**、I、J1–J3、J5、**J7** | 每次存檔 | 筆電,無網路 |
+| **L1** 單元 + property | A、B、C、D1–D4、**D6、D7**、E1–E2、H1、H3、H5、**H6(結構閘)**、I、J1–J3、J5、**J7**、**M1–M9** | 每次存檔 | 筆電,無網路 |
 | **L2** 回放 | B3、F1、F4、F6、H2、H4 | 每次 PR | 筆電 + 凍結 fixture |
 | **L3** 突變 | J4(全部具名突變體 + 無突變對照),**「全部」這個詞由 J7 守住** | 每次 PR | 筆電 |
 | **L4** 在機量測 | F2、F3、F5、G1、G2、D5、**§2.K 的 Track C 五項(K3/K5 已做,K1/K2/K4 被安全群組擋住)** | 手動,改動相關子系統時 | EC2 + Bedrock,見下 |
+| **L5** 人工 UAT | E3(瀏覽器)、**M5/M6 的真瀏覽器半段**(圖真的會動、`prefers-reduced-motion` 真的靜下來)+ §4 檢查表 | 開蓋時 | 人 |
 
 L4 的成本要更新:計劃書寫「Track C 合計 < $1」,而實際已經超過。
 已跑的部分是 **6 次 M1 呼叫 + 120 次串流呼叫(maxTokens 256)+ 66 次 converse(maxTokens 900)
@@ -1281,7 +1371,6 @@ L4 的成本要更新:計劃書寫「Track C 合計 < $1」,而實際已經超�
 第一次的 M3 用了會釘死長度的 prompt(§2.K 修正 4),那一次的錢是為了發現這件事付的。
 按 output token 量級估在 **$1 上下**,不是 < $1;
 精確金額要等 Cost Explorer 落帳,而**估算值不該被寫成量測值**。
-| **L5** 人工 UAT | E3(瀏覽器)+ §4 檢查表 | 開蓋時 | 人 |
 
 指令:
 

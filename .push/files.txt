@@ -1,38 +1,70 @@
-# S8 的離線半段:工具邊界 —— 封閉註冊表、導出的 dispatch、六種結果、出口普查
-# (T-L1..T-L5)。MCP client、OAuth 與權杖儲存是這一階段的在機半段,不在這裡。
+# 兩張圖,以及讓它們不能說謊的那份普查。
 #
-# 這份清單同時是 infra/redact_scan.py 的檔案清單 —— 它只讀這裡列出的檔案,
-# 所以一份過期的清單會讓脫敏閘對錯的分母印出 0 findings。
+# `docs/architecture.svg` 從手畫改成**生成**:節點、topic、缺口全部來自
+# `infra/ros_census.py`,而它執行 `OAR_DRY=1 infra/run_ec2.sh start-all` 而不是
+# 解析一份清單 —— 所以一個不再被啟動的節點也就不再被畫出來。
+# `docs/workflow.md` 是新的:10 張 Mermaid 圖畫**序列**,而 SVG 畫**常態形狀**,
+# 兩張圖對同一份普查在兩個方向上對帳(§2.M / T-M1..T-M8)。
 #
-# 清單本身由**與 base tree 對帳**產生,不是憑記憶列的:把工作樹每個檔案的
-# `git hash-object` 跟 s7-output-guard 的 tree(134 個 blob,truncated=false)
-# 比一次,新增兩個、變更六個,就是下面八行;另外兩行是推送機制自己。
+# 這份清單由**與 base tree 對帳**產生,不是憑記憶列的:把工作樹每個檔案的
+# `git hash-object` 跟 main 的 tree(136 個 blob,truncated=false)比一次,
+# 得到 4 個變更 + 11 個新增;扣掉刻意排除的那 4 個之後是 11 行,
+# 再加上推送機制自己的兩行,總共 13 個 blob。
+#
 # 對出來的差集裡有四個檔案刻意不在清單上:daemon/miniaudio.h 與
 # daemon/oar-daemon 是廠商標頭與建置產物,infra/local.env 與 infra/ssh_config
 # 帶帳號專屬值且 git-ignored。.push/message.txt 是這次推送的訊息本體。
 #
-# 對帳同時比了模式:這八個檔案在 base tree 與磁碟上都是 100644,沒有
-# --allow-mode-change。寫錯模式會在每一項檢查全綠的情況下剝掉執行位元。
+# 對帳同時比了模式:四個變更檔在 base tree 與磁碟上都是 100644,
+# 十一個新增檔在磁碟上都是 100644,沒有 --allow-mode-change。
+# 寫錯模式會在每一項檢查全綠的情況下剝掉執行位元 —— 那是 S3 那次現場抓到的。
 
-# 工具邊界本體:純模組,零 ROS、零 boto3、零網路、零時鐘。
-# 註冊表是封閉的,dispatch 由模組命名空間導出而不是第二份 name→function dict ——
-# 一份會過期的第二讀者,在這裡過期的形式是「模型可以呼叫但沒人宣告過的函式」。
-100644 agent/tools.py
-100644 tests/test_tools.py
+# 普查本身:讀啟動器而不是讀清單。`edges_in()` 對解不開的 topic 參數**拋錯**,
+# 因為一個安靜跳過的邊會讓圖少畫一條線而所有檢查全綠。
+100644 infra/ros_census.py
 
-# agent_node 記 outcome 而不是只記 success/error:Converse 的 status 只有兩個值,
-# 把六個折進去就是讓「拒絕」與「伺服器連不上」變成同一行日誌。
-100644 agent/agent_node.py
+# 缺口清單:7 行,類別是封閉集 {external, pending, defect, unused},
+# 而且**兩個方向**都查 —— 真的斷頭卻沒有行要紅,已經接好卻留著行也要紅。
+# `/game/rps_round` 與 `/memory/rps_table` 是一個缺口的兩端,只接一端會看起來像進度。
+100644 infra/graph_gaps.tsv
 
-# 工具面從 skills/loader.py 拆走:TOOL_NAME / TOOL_CONFIG / run_tool / MAX_TOOL_HOPS
-# 四個都刪掉。誰可以呼叫、用什麼名字、呼叫幾次,是關於「每一個工具」的問題而不是
-# 關於技能的問題,把答案寫在這裡就讓這個模組成為第二個工具會被靜靜追加的地方。
-100644 skills/loader.py
-100644 tests/test_skills_loader.py
+# 生成器:寬度、框、線段全部算出來,並在寫檔前跑 `geometry_findings`。
+# 退出碼 0 寫了 / 1 有幾何 finding / 3 普查跑不起來 —— 一個跑不起來的守衛
+# 不可以回報乾淨。動畫用 CSS `offset-path`,而 `@keyframes` **不在** `@supports`
+# 裡面:巢進去會解析、會列在 cssRules 裡、animation-name 也算得出來,但不會動。
+100644 infra/arch_render.py
 
+# 生成出來的圖,連同它的證據:render 記錄裡的像素是**引用**而不是重新量測,
+# 因為離線套件裡沒有瀏覽器也沒有 node。第一版草稿的寬度留在記錄裡當對照
+# ——那 7 個區塊全部解析成功、全部繪出、0 個 error,而且不能讀。
+100644 docs/architecture.svg
+100644 docs/workflow.md
+100644 docs/evidence/mermaid-render.json
+
+# 推送之後在 Chromium 151 上量的那一趟。它的結論是正面的(點真的在路徑上移動),
+# 但它最有價值的兩行是負面的:`CSS.supports('offset-path','path("")')` 在 Chrome 151
+# 是 **false**,所以每份特徵偵測範例的寫法會在一個完全支援的瀏覽器上把閘關上;
+# 而自動化環境的時間軸凍在 0,兩張相隔 2.5 秒的截圖位元相同 —— 那量的是 harness。
+# T-M9 斷言這份記錄引用的閘字串真的出現在出貨的那個 SVG 裡。
+100644 docs/evidence/architecture-animation.json
+
+# 43 個案例,每一項都跑兩個方向;L3 選到 22 個:19 個具名突變體 + 3 個對照
+# (文件 / SVG / 缺口清單各一,因為它們打的是三個不同的檢查族)。
+100644 tests/test_architecture.py
+
+# 新的 entrypoint 要嘛有人啟動,要嘛有一行可審查的宣告。
+# 這一行讓 infra/check_deploy.sh 從 55 checks / 1 finding 回到 56 checks / 0 findings。
+100644 infra/standalone_entrypoints.tsv
+
+# §2.M 與 §0 的數字:1445 個案例、279 個突變體、34 個模組。
+# 這三個數字沒有一個是手數的,`infra/doc_counts.py` 逐一對帳。
 100644 docs/test-design.md
+
+# 兩份 README 同一個 PR 同步,而且兩邊都寫出 `offset-path` 的瀏覽器條件
+# (Chrome、Safari 16+、Firefox 122+):較舊的 renderer 會退化成同一張圖但封包不動。
 100644 README.md
 100644 README.zh-TW.md
+
 100644 .push/files.txt
 # tests/test_push_branch.py 要求推送機制本身出現在它產出的樹裡:
 # 清單與推送器兩個都要在清單上,否則那棵樹裡的機制無法被複查。
