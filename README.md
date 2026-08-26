@@ -138,7 +138,7 @@ Full runbook with troubleshooting: [`docs/DEMO.md`](docs/DEMO.md).
 | `web/robot-view/` | Single-page face: MJPEG body view + event HUD |
 | `skills/` | Markdown skills plus the loader that gates them. See [`skills/README.md`](skills/README.md) |
 | `safety/`, `memory/`, `agent/context.py`, `agent/tools.py` | The constitution, the single-writer store, the salience formula, the episode segmenter, the nightly consolidation, the five-path retriever, the deletion path, the prompt assembler, the asynchronous output guard and the tool registry — pure modules, zero ROS, so their tests run on a laptop |
-| `tests/` | Offline suite, 1669 cases: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
+| `tests/` | Offline suite, 1671 cases: no ROS, no GPU, no network, no Bedrock. `pytest` runs it on a laptop |
 | `infra/` | Provisioning, instance setup, process supervision (`run_ec2.sh` uses pid files, never `pkill` patterns) |
 | `docs/` | Design record: seven research rounds (raw evidence under `docs/evidence/`), the day-0 latency measurements, the demo runbook, the memory/safety design critique, and the [test contract](docs/test-design.md) |
 

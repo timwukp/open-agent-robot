@@ -113,8 +113,8 @@ ASYMMETRIES = ("unreached", "uncalled", "unpassed")
 # verify is a reason that stops being verified.
 CLASSES = {
     "pending_stage":       "the caller belongs to a stage that has not landed. The "
-                           "reason names an R<n>.<m> stage id, and the row is deleted "
-                           "in the PR that wires it",
+                           "reason names a stage id in STAGE_RE's shape, and the row "
+                           "is deleted in the PR that wires it",
     "by_hand":             "reached only from a by-hand tool or harness. If the seam "
                            "has its own row in infra/standalone_entrypoints.tsv the "
                            "reason must name itself; otherwise it is a library of such "
@@ -138,7 +138,29 @@ CLASSES = {
 # rule and the live one is the weaker.
 NEEDS_STAGE = ("pending_stage", "defect")
 
-STAGE_RE = re.compile(r"\bR[0-9]+\.[0-9]+\b")
+# The shape of a stage id, and the **only** place in this repo that spells it.
+#
+# The optional letter suffix is not cosmetic and it is not speculative. `R1.1b` is a
+# stage that has already shipped, and until R1.3 no row's reason happened to name a
+# suffixed stage — so the vocabulary the project uses for its own stages and the
+# vocabulary this gate accepts had already disagreed, invisibly, for two rounds. The
+# suffix carries the one thing renumbering would lose: *the same concern, split because
+# it grew too large to review in one PR*. Renumbering R1.3's consolidation half to a
+# free `R<n>.<m>` would file it next to unrelated work and drop that.
+#
+# Still strict at both ends: `\b` after the optional letter refuses `R1.3bx`, so this
+# admits one suffix letter and not an arbitrary word.
+#
+# **What this does not check, stated because the old failure message claimed it did.**
+# The message used to read "as used in docs/plan.md", and nothing here reads
+# `docs/plan.md` — this is a shape test, so a reason may name `R9.9` and pass. Two
+# consequences follow and neither is checked today: a stage id that exists in no plan,
+# and a row still naming a stage that has already *landed* (the census only notices the
+# row when the module becomes reached, which is a different event). Both are membership
+# questions against one authority, which is the R3 T-ID gate's family, and plan §6 item
+# 2 now carries them. Until then the enforcement is review, and saying so is cheaper
+# than a message that describes a check nobody wrote.
+STAGE_RE = re.compile(r"\bR[0-9]+\.[0-9]+[a-z]?\b")
 REASON_FLOOR = 60          # a shorter reason is a shrug; see graph_gaps.tsv's rows
 
 # The shape of the one line that makes a launched file able to import its own repo, as
@@ -513,8 +535,9 @@ def findings(root: Path) -> list[str]:
                 out.append(f"FAIL {seam} names {missing}, which does not exist")
         elif cls in NEEDS_STAGE and not STAGE_RE.search(reason):
             out.append(f"FAIL {seam} is class {cls} but its reason names no stage id "
-                       f"(expected R<n>.<m>, as used in docs/plan.md) — a row "
-                       f"describing future work with no stage is a row that stays")
+                       f"matching {STAGE_RE.pattern} — a row describing future work "
+                       f"with no stage is a row that stays. This is a shape test and "
+                       f"nothing here reads docs/plan.md; see STAGE_RE")
     return out
 
 

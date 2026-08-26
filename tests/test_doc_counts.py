@@ -177,7 +177,12 @@ QUOTED = [
     # if the denominator is right, so these are the last two places a count should be typed.
     ("docs/test-design.md", "今天是 {} 個案例", SUITE, "suite total (§3 budget overrun)"),
     ("docs/test-design.md", "對**整個層**({} 個案例", SUITE, "suite total (§3 denominator)"),
-    ("docs/test-design.md", "個案例、其中 {} 個\n突變體)", MUTANTS,
+    # R1.3's scoping reflowed the sentence this one damages, and the mirror went red while the
+    # gate stayed green — the gate's own pattern reads `個 \s* 突變體`, this list reads a literal.
+    # That asymmetry is deliberate and it is the cheaper half of "both readers move together":
+    # a wrap-tolerant mirror would keep passing while the sentence it claims to damage drifted
+    # anywhere in the paragraph, so this row is allowed to be the one that notices a reflow.
+    ("docs/test-design.md", "個案例、其中 {} 個突變體)", MUTANTS,
      "mutation total (§3 denominator)"),
     # R0b-2: the three documents the widened `DOCS` tuple brought in. Each is here because
     # the tuple alone checks nothing — a path with no pattern quoting a number out of it is

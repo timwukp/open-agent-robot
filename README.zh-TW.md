@@ -103,7 +103,7 @@ open web/robot-view/index.html
 | `web/robot-view/` | 單頁「臉」:MJPEG 身體視圖 + 事件 HUD |
 | `skills/` | Markdown 技能,以及替它們把關的加載器。見 [`skills/README.md`](skills/README.md) |
 | `safety/`、`memory/`、`agent/context.py`、`agent/tools.py` | 憲法、單寫者儲存層、salience 公式、episode 切分器、夜間鞏固、五條路徑的檢索器、刪除路徑、提示組裝器、異步輸出守衛與工具登錄冊 ——純模組、零 ROS,所以它們的測試在筆電上就跑得完 |
-| `tests/` | 離線測試 1669 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
+| `tests/` | 離線測試 1671 個案例:不用 ROS、不用 GPU、不用網路、不用 Bedrock。`pytest` 在筆電上就跑得完 |
 | `infra/` | 開機供裝、環境安裝、行程監管(`run_ec2.sh` 用 pid 檔,**絕不**用 `pkill` 樣式) |
 | `docs/` | 設計記錄:七輪研究(原始證據在 `docs/evidence/`)、day-0 延遲量測、demo 手冊、記憶與安全的設計批判,以及[測試契約](docs/test-design.md) |
 
