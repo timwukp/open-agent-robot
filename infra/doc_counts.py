@@ -214,8 +214,15 @@ def audit(docs: dict[str, str], per_file: dict[str, int],
     tools_funcs = test_functions.get(TOOLS_TESTS, 0)
     store_mutants = mutation_per_file.get(STORE_TESTS, 0)
     checks = (
-        # the headline totals, quoted in three documents
-        (TEST_DESIGN, r"今天真正跑起來的是 (\d+) 個案例", total, "suite total"),
+        # the headline totals, quoted in three documents.
+        # R1.2 reworded the first one. `total` is `pytest --collect-only`, and the sentence
+        # said "what actually runs today", which is a different quantity: the R1.2 verification
+        # run was 1668 passed and one skipped — `tests/test_meta.py` needs an `oar-daemon`
+        # *process*, not the binary. Numerically the two agreed, so nothing here went red; the
+        # label was wrong about what this line computes, and the skipped case is the one that
+        # separates them. This gate cannot derive a skip count (it never executes the suite),
+        # so the sentence now says `收集到` and the pass/skip pair is prose beside the seconds.
+        (TEST_DESIGN, r"今天被收集到的是 (\d+) 個案例", total, "suite total"),
         (TEST_DESIGN, r"全套 (\d+) 個案例", mutation_total, "mutation total"),
         (TEST_DESIGN, r"選到 \*\*(\d+) 個案例\*\*", mutation_total, "mutation total (T-J4)"),
         (TEST_DESIGN, r"沒有第 (\d+) 個躲在標記外面", mutation_total + 1,

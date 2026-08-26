@@ -217,6 +217,24 @@ AUDIT_FIELDS = {
     "chat": ("blocks", "chars", "findings"),
     # memory/memory_node.py, at card load
     "profile_loaded": ("facts", "kinds", "locked"),
+    # memory/memory_node.py, at RPS table load (R1.2). Three counts and a boolean, no
+    # move and no round: what a person played is `rps_table.json`'s business, and that
+    # file is deletable while this stream is not — a round copied here would survive the
+    # erasure that removed it from the only copy meant to hold it.
+    #
+    # `orphans` is the number the row exists for. Every round R1.2 writes carries
+    # `episode: None`, because episode ids arrive in R1.3, so `recall._run_rps` maps them
+    # to `ORPHAN` and `deletion_findings` reports them as unattributed. Writing the count
+    # at boot makes that debt a figure in the audit stream instead of something a reader
+    # would have to re-derive from the table — and the count is not recoverable later, once
+    # R1.3 starts filling the field in.
+    #
+    # `existed` is here rather than only in the log because `rounds: 0` has two causes —
+    # no file yet, or a file read and empty — and they are indistinguishable on disk
+    # without it. That is R1.1b's finding applied one layer up: a zero with two causes
+    # needs the flag that separates them, and a field set is free to mandate exactly once,
+    # before the first writer exists. R1.2 *is* that writer.
+    "rps_restored": ("existed", "orphans", "rounds"),
     # memory/erase.py. `TOMBSTONE_FIELDS` is the read-side twin: it lists the
     # *complete* on-disk field set, so it equals this row plus the implicit ones, and
     # `tests/test_audit_schema.py` asserts that equality rather than trusting it.

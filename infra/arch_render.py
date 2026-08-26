@@ -329,6 +329,7 @@ MODULE_PROSE: dict[str, str] = {
     "memory/consolidate.py": "closed predicates, N >= 2 independent episodes",
     "memory/erase.py": "cascade delete plus a receipt that carries its own gap",
     "memory/rank.py": "three ablation arms, never a mutated Hit.score",
+    "memory/rps_state.py": "disk holds deletable rounds; the wire form is derived",
     "memory/profile.py": "read-only seed until unlock_for_s5()",
     "memory/rank_harness.py": "T-F6 ablation runner; 4 exit codes, no labels = 2",
     "safety/guard.py": "constitution, L0 stop reflex, instruction/data seam",

@@ -63,10 +63,20 @@ from std_msgs.msg import String
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from memory import profile as pf  # noqa: E402
+from memory import rps_state as rps  # noqa: E402
 from memory import store as st  # noqa: E402
 
 TOPIC = "/memory/profile"
 HUD_TOPIC = "/game/events_out"
+
+# The RPS pair, and it is a pair on purpose. `game_node` publishes one resolved round
+# fire-and-forget and subscribes latched to the accumulated model, so `infra/graph_gaps.tsv`
+# counted the two topics as **one** gap from both sides: wiring one end alone would look
+# like progress and change nothing, because a table nobody persists is a table nobody can
+# restore. Both names are pinned against `game/game_node.py`'s own literals by AST in
+# tests/test_rps_wiring.py, so a rename on one side cannot pass on the other.
+RPS_ROUND_TOPIC = "/game/rps_round"
+RPS_TABLE_TOPIC = "/memory/rps_table"
 
 # The single writer's inbox. Any node with something for `audit.jsonl` publishes here
 # instead of opening the file, which is what keeps "one writer" true for code that has
@@ -90,14 +100,41 @@ PROFILE_QOS = QoSProfile(
     durability=DurabilityPolicy.TRANSIENT_LOCAL,
 )
 
+# Same four settings as PROFILE_QOS, and a separate object rather than an alias.
+#
+# The argument for `transient_local` is the profile card's, restated because the consumer
+# is different: `game_node` subscribes latched (`game/game_node.py`'s `LATCHED`) and starts
+# in whatever order the shell loop in `infra/run_ec2.sh` happens to start things. A
+# volatile publisher would hand the restored model to whoever was already listening, and a
+# `game_node` that came up second would play the 1/3 coin for its whole session with
+# nothing anywhere saying so — the exact failure `infra/graph_gaps.tsv` costed at ~120
+# rounds, arriving through wiring instead of through the missing wire.
+#
+# Not `PROFILE_QOS` itself, and not because two objects are safer: they are two decisions
+# that happen to agree today. The card is published once per boot and the table is
+# republished after every round, so `depth` is a genuinely separate choice — and an alias
+# would let one of them be re-tuned while silently re-tuning the other.
+TABLE_QOS = QoSProfile(
+    depth=1,
+    history=HistoryPolicy.KEEP_LAST,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+)
+
 
 class MemoryNode(Node):
-    def __init__(self, store: "st.Store", card: "pf.ProfileCard") -> None:
+    def __init__(self, store: "st.Store", card: "pf.ProfileCard",
+                 table: "rps.RpsState") -> None:
         super().__init__("memory")
         self.store = store
         self.card = card
+        # Loaded in `main`, not here, for the same reason the card is: `rps_state.load`
+        # can refuse a present-but-unreadable table, and a refusal that happens inside a
+        # constructed Node is a refusal that has already created publishers.
+        self.table = table
         self.pub = self.create_publisher(String, TOPIC, PROFILE_QOS)
         self.pub_hud = self.create_publisher(String, HUD_TOPIC, 5)
+        self.pub_table = self.create_publisher(String, RPS_TABLE_TOPIC, TABLE_QOS)
         payload = json.dumps(card.as_dict(), ensure_ascii=False, sort_keys=True)
         self.pub.publish(String(data=payload))
         self.get_logger().info(
@@ -115,10 +152,49 @@ class MemoryNode(Node):
             "locked": st.is_locked(pf.CARD_NAME),
         })
 
-        # Created last, so `profile_loaded` is seq 1 on every boot: the record saying
+        # Published only when there are rounds to publish, which is a decision and not a
+        # shortcut. An `Opponent` with zero observations is the model `game_node` already
+        # built at boot, so a latched empty table carries no information — and it does
+        # produce a receipt: `on_rps_table` would log "restored opponent model:
+        # observations per order {2: 0, 3: 0, 4: 0}, gate shut" for a restore that did not
+        # happen. Because the sample is latched, that false receipt is also what a
+        # `game_node` joining an hour later reads.
+        if self.table.rounds:
+            self.pub_table.publish(String(data=self.table.payload()))
+            self.get_logger().info(
+                f"rps table published on {RPS_TABLE_TOPIC}: "
+                f"{len(self.table.rounds)} rounds, observations per order "
+                f"{self.table.observations()}, {self.table.orphans()} unattributed")
+        else:
+            # `existed` is why `RpsState` carries it: "the table was read and is empty" is
+            # a different fact from "there is no table", they produce the same publish
+            # (none), and only the log and the audit record can tell them apart.
+            self.get_logger().info(
+                "no rps table to publish — "
+                + ("read and empty" if self.table.existed else "no file yet"))
+
+        # Auditable for the same reason `profile_loaded` is: "what did the robot know at
+        # boot" includes the opponent model. `orphans` is here because it is the number
+        # that says how much of this table a deletion cannot attribute to an episode —
+        # which is *every* round until R1.3 mints episode ids, so this record is where
+        # that debt is visible rather than inferred. Appended even when nothing was
+        # restored, so a boot that found no table is distinguishable in `audit.jsonl` from
+        # a boot where this code did not run at all — which is exactly the confusion
+        # R1.1b was: a node that never started looked like a node with nothing to say.
+        self.store.append("audit", {
+            "kind": "rps_restored",
+            "existed": self.table.existed,
+            "rounds": len(self.table.rounds),
+            "orphans": self.table.orphans(),
+        })
+
+        # Both created last, so `profile_loaded` is seq 1 on every boot: the record saying
         # what the robot knew when it started must not be able to land behind a record
-        # from a node that started first.
+        # from a node that started first. `rps_restored` is seq 2 for the same reason and
+        # by the same construction — it is appended above, before either subscription
+        # exists, so no arriving round can overtake it.
         self.create_subscription(String, AUDIT_TOPIC, self.on_audit, 10)
+        self.create_subscription(String, RPS_ROUND_TOPIC, self.on_rps_round, 10)
 
     def on_audit(self, msg: String) -> None:
         """Append one audit record produced by another node — the single-writer hop.
@@ -145,6 +221,45 @@ class MemoryNode(Node):
         self.get_logger().info(
             f"audit record {record.get('kind')!r} appended as seq {seq}")
 
+    def on_rps_round(self, msg: String) -> None:
+        """Persist one resolved round, adopt it, republish the model. In that order.
+
+        The order is the whole content of this method. `candidate` validates and builds
+        the whole file including the new round while mutating nothing, `write_snapshot`
+        takes it, and only then does `commit` let the in-memory model count it. Reversed,
+        a round the writer refuses is already in the counts and the *next* round persists
+        that as though it had happened.
+
+        **What that ordering guarantees is weaker than "durable first", and the weaker
+        statement is the one to hold.** `write_snapshot` enqueues and returns; the
+        `os.replace` happens on the writer thread. So the drift is bounded rather than
+        removed — the model can be at most one round ahead of the disk, and the round that
+        discovers an asynchronous failure is the one refused, because
+        `Store._raise_if_failed` runs on entry to the *next* call. `memory/rps_state.py`'s
+        `candidate` states the full boundary and `tests/test_rps_wiring.py` pins it.
+
+        A refusal never takes the node down, for `on_audit`'s reason: a malformed round is
+        a defect in the sender, and the robot losing its memory for the rest of the session
+        is a worse outcome than one unlearned round. The log line names what was refused.
+
+        The republish is unconditional here — unlike the boot publish — because by this
+        point `self.table.rounds` is non-empty by construction, so the "an empty table is
+        a false receipt" case cannot arise.
+        """
+        try:
+            payload = json.loads(msg.data)
+            record, whole = self.table.candidate(payload["user"], payload["robot"])
+            seq = self.store.write_snapshot(rps.ARTIFACT, whole)
+            self.table.commit(record)
+        except Exception as exc:                                    # noqa: BLE001
+            self.get_logger().error(f"rejected rps round ({exc})")
+            return
+        self.pub_table.publish(String(data=self.table.payload()))
+        self.get_logger().info(
+            f"round {record['user']}/{record['robot']} -> {record['outcome']} "
+            f"snapshot queued as seq {seq}; {len(self.table.rounds)} rounds, "
+            f"observations per order {self.table.observations()}")
+
 
 def main() -> None:
     rclpy.init()
@@ -162,7 +277,17 @@ def main() -> None:
             # "this robot has no memory" instead of a silent one. The exception
             # propagates through the `finally` below, so the store is closed once.
             raise SystemExit(2)
-        rclpy.spin(MemoryNode(store, card))
+        # Same policy as the card and the same reason, from `rps_state.load`'s docstring:
+        # a table that is present and unreadable stops the node, because the alternative
+        # is that the first round calls `write_snapshot` and atomically replaces a file a
+        # human could still have repaired. A *missing* file is not an error — that is a
+        # first-ever run, which starts from no counts.
+        try:
+            table = rps.load(store.root)
+        except rps.RpsStateError as exc:
+            log.error(f"{exc} — refusing to start rather than overwrite it")
+            raise SystemExit(2)
+        rclpy.spin(MemoryNode(store, card, table))
     finally:
         store.close()
 

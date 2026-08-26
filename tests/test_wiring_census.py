@@ -300,8 +300,24 @@ def _mut_uncalled_is_only_about_its_own_file(root: Path) -> None:
 
 WRITER = "memory/memory_node.py"
 BOOTSTRAP_LINE = "sys.path.insert(0, str(Path(__file__).resolve().parent.parent))"
-WRITER_IMPORTS = ("from memory import profile as pf  # noqa: E402\n"
-                  "from memory import store as st  # noqa: E402")
+
+
+def writer_package_imports(root: Path) -> list[str]:
+    """The single writer's own `from memory import ...` lines, read from the tree.
+
+    **Derived, because the written-down version broke.** This used to be a two-line
+    constant holding `profile` and `store`, and the mutant below anchored on
+    `BOOTSTRAP_LINE + "\\n\\n" + <that constant>`. R1.2 legitimately added a third import
+    (`rps_state`), which moved the anchor, and the failure the suite reported was *"mutant
+    anchor no longer present"* — the harness saying it could not run, not the guard saying
+    the tree was clean. That is the right direction to fail in, and it is still a mutant
+    that stopped mutating: a list of names cannot notice a new name, and this one was
+    pinned to the writer not growing an import.
+    """
+    lines = [ln for ln in (root / WRITER).read_text().splitlines()
+             if ln.startswith("from memory import")]
+    assert lines, f"no `from memory import` line in {WRITER} — the mutant has no anchor"
+    return lines
 
 
 def _mut_bootstrap_removed(root: Path) -> None:
@@ -314,9 +330,14 @@ def _mut_bootstrap_removed(root: Path) -> None:
 def _mut_bootstrap_below_the_import(root: Path) -> None:
     """Present but useless. An import runs when it is read, so a bootstrap underneath it
     fixes sys.path for a process that already died. A check that only asked "is the line
-    there" would call this tree clean, and the line is there."""
-    patch(root, WRITER, BOOTSTRAP_LINE + "\n\n" + WRITER_IMPORTS,
-          WRITER_IMPORTS + "\n\n" + BOOTSTRAP_LINE)
+    there" would call this tree clean, and the line is there.
+
+    Moved below the **last** package import rather than the first, so the mutant stays a
+    real one however many the writer grows: with any import left above the bootstrap, the
+    process still dies where it always did."""
+    last = writer_package_imports(root)[-1]
+    patch(root, WRITER, BOOTSTRAP_LINE + "\n", "")
+    patch(root, WRITER, last, last + "\n" + BOOTSTRAP_LINE)
 
 
 def _mut_bootstrap_at_the_wrong_depth(root: Path) -> None:
