@@ -1,0 +1,75 @@
+# open-agent-robot — every markdown document under `docs/`, with its status and what
+# overturned it.
+#
+# Why this file exists, from a measurement rather than a principle: on 2026-08-25 there
+# were six research rounds and one design critique in `docs/` — 191 KiB together — and
+# **four of the six carried no supersession marker of any kind**. One of the four is
+# round 4, whose §0 build order `docs/design-critique-memory-safety-2026-08-22.md` §4
+# explicitly replaces, and whose memory pick `docs/research-round5-memory-safety-2026-08-22.md`
+# re-answers in its own header. A reader who opened round 4 first had no way to learn
+# either fact. The rounds are kept verbatim on purpose (they are measured evidence), so
+# the retraction has to live somewhere outside them, and "somewhere" has to be a place a
+# machine checks.
+#
+# `infra/doc_status.py` walks `docs/**/*.md` **recursively** and checks this table in both
+# directions. The recursion is not cosmetic: `docs/evidence/` holds two documents, and a
+# non-recursive glob would have exempted that whole directory while reporting clean.
+#
+# Same shape as `infra/graph_gaps.tsv`, `infra/dormant_seams.tsv`,
+# `infra/standalone_entrypoints.tsv` and `infra/generated_paths.tsv`, and for the same
+# reason: an excuse living inside the guard is where the next unreviewed exemption gets
+# added. A document on disk with no row here is a finding (**a new document cannot join
+# `docs/` silently**). A row whose file no longer exists is also a finding — a stale row
+# would quietly cover the next document that arrives with the same name.
+#
+# Columns (tab-separated):  path <TAB> status <TAB> relation <TAB> reason
+#
+# `status` is a closed set, checked by the guard:
+#   current     the answer to "what is true now". A reader may cite it as the design.
+#   evidence    kept verbatim because it is a dated measurement. It may be cited for
+#               *how a number was obtained*, never for what the design currently is.
+#   superseded  wholly replaced. The relation must name the replacement. This class is
+#               the one that should stay empty: nothing in this tree has been wholly
+#               replaced yet, because the rounds are evidence and evidence does not
+#               expire — only conclusions drawn from it do. If a row ever lands here,
+#               deleting the file becomes a reviewable question rather than a habit.
+#
+# `relation` is `-`, or one or more terms joined by `;`, each from a closed vocabulary:
+#   superseded_by:<path>            everything this document concluded now lives there.
+#   overturned_in_part_by:<path>    some conclusion here is dead; the rest still stands.
+#
+# **The `;` is load-bearing, and it came from the data.** A single-value column looked
+# sufficient until round 4 turned out to have *two* independent overturners — the
+# critique replaced its build order and round 5 re-answered its memory pick — and rounds
+# 1–2 likewise have two. A one-slot column would have forced dropping one of each pair,
+# which is precisely the flattening `docs/design.md` §7 exists to prevent: the row would
+# have read as complete while hiding half of what a reader needs.
+#
+# Every `<path>` a relation names must exist and must itself be `current` or `evidence`.
+# A retraction that points at a superseded document is a dead end with a footnote.
+#
+# `reason` must be at least 60 characters. The floor is the same judgement as
+# `infra/graph_gaps.tsv`: a reason short enough to be a shrug is not a reason, and the
+# whole value of a reviewable exemption is that someone had to write down why.
+#
+# `docs/INDEX.md` is the human-readable rendering of this table. The guard checks the two
+# against each other in both directions, because two readers of one set of facts each
+# stay green while the other side moves — the same rule that keeps `README.md` and
+# `README.zh-TW.md` in one PR.
+docs/INDEX.md	current	-	the human-readable rendering of this table; it exists so that a reader lands on the status list before opening any round, and the guard checks the two against each other in both directions
+docs/design.md	current	-	the single authority for what this system is trying to be; every claim about the running system names a file:line, a test that goes red, or a dated measurement
+docs/design.zh-TW.md	current	-	the Traditional Chinese counterpart of docs/design.md, shipped in the same PR per the README convention; every file:line, number and T-ID must agree across both
+docs/plan.md	current	-	the schedule: which stage lands next and what each stage must delete from a manifest, and it is what dormant_seams.tsv rows point at when they name an R<n>.<m> stage
+docs/test-design.md	current	-	the test contract: the §0 case table, the one-assertion-one-named-mutant rule, and the five execution layers that infra/doc_counts.py reconciles against pytest
+docs/DEMO.md	current	-	the runbook for the rock-paper-scissors demo, which is the one promise in docs/design.md §1 that runs end to end today, so it is instructions rather than evidence
+docs/workflow.md	current	-	the sequence charts, drawn as the counterpart to docs/architecture.svg's standing shape: what happens in order when someone speaks, interrupts, asks to be forgotten, or triggers a tool
+docs/day0-measurements.md	evidence	-	the dated day-0 gate results on the actual instance (driver, ROS 2, MuJoCo and Bedrock TTFT versions included), quoted by docs/design.md §2 for the 900 ms p50 that forced the System 1 / System 2 split
+docs/design-critique-memory-safety-2026-08-22.md	evidence	-	the round 4 critique, and an overturner rather than something overturned: its §4 replaces round 4's §0 build order outright, and its moral-boundary section is the genealogical argument docs/design.md §4.1 draws on
+docs/research-multimodal-robot-agent-stack-2026-08-20.md	evidence	overturned_in_part_by:docs/research-round3-feasibility-2026-08-20.md;overturned_in_part_by:docs/research-round6-simreal-joint-mapping-2026-08-22.md	rounds 1-2, the stack survey; round 3's header relaxes its hard no-AGPL constraint to a demo-only waiver, and round 6 row 6 flips its judgement that xacro could not be the single source of truth
+docs/research-round3-feasibility-2026-08-20.md	evidence	-	the feasibility red-team; no later round names a conclusion of it as dead, its YOLO26 demo-only waiver is still the operative constraint, and its Bedrock TTFT measurement is what docs/design.md §2 cites
+docs/research-round4-agent-brain-2026-08-21.md	evidence	overturned_in_part_by:docs/design-critique-memory-safety-2026-08-22.md;overturned_in_part_by:docs/research-round5-memory-safety-2026-08-22.md	the agent-brain round; the critique §4 explicitly replaces its §0 build order, and round 5's header states that its cognee + Graphiti memory pick rested on the weakest evidence in it and re-answers the question
+docs/research-round5-memory-safety-2026-08-22.md	evidence	-	the memory and moral-boundary round; nothing later overturns it, and round 6 row 10 independently corroborates its finding that a local guard model fails on language rather than on VRAM
+docs/research-round6-simreal-joint-mapping-2026-08-22.md	evidence	overturned_in_part_by:docs/research-round7-rl-and-two-tier-2026-08-22.md	the sim-to-real round; it already carries two in-file round 7 corrections, both retiring the 37.6% to 56.9% scale-and-safety pair whose source SafeAgentBench explicitly says it does not contain
+docs/research-round7-rl-and-two-tier-2026-08-22.md	evidence	-	the newest round, and the one that refuted routing and RL outright; nothing overturns it, but its own appendix A retracts three of its citations, which is why docs/design.md §4.4 lists them rather than leaving them on page 12
+docs/evidence/round7/README.md	evidence	-	the index of round 7's raw machine output, kept because the recovery of 88 verdicts from journal.jsonl is the reason that round's synthesis is trustworthy at all
+docs/evidence/t-e3-browser-disclosure.md	evidence	-	the dated L5 browser walk-through for T-E3, kept verbatim because the computed-colour check it records cannot run in CI and a human had to look at the page

@@ -352,6 +352,7 @@ MODULE_PROSE: dict[str, str] = {
     "infra/arch_render.py": "this file: renders docs/architecture.svg from the census",
     "infra/entrypoints.py": "AST discovery of executable entrypoints",
     "infra/doc_counts.py": "documented numbers vs pytest collection",
+    "infra/doc_status.py": "docs/**/*.md vs the table, the index and the tree",
     "infra/redact_scan.py": "redaction over the explicit push list",
     "infra/day0_measure.py": "the day-0 latency measurements, by hand",
 }

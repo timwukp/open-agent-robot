@@ -4,8 +4,10 @@ This file is the **single authoritative statement of what this system is meant t
 today**. Before it existed, the answer lived in `~/.claude/plans/` on one laptop plus
 six research documents and one design critique inside `docs/` — **191 KiB together** —
 ordered by date. Measured on 2026-08-25, **four of those six research files contain no
-supersession marker of any kind** — and one of the four is round 4, which round 7
-overturns in part. An outside contributor asking "what is the design?" had to read
+supersession marker of any kind** — and one of the four is round 4, whose §0 build order
+`docs/design-critique-memory-safety-2026-08-22.md` §4 replaces outright and whose memory
+pick `docs/research-round5-memory-safety-2026-08-22.md` re-answers in its own header.
+An outside contributor asking "what is the design?" had to read
 those 191 KiB and work out for themselves which conclusions had expired. That is a real gap
 for something calling itself open and hackable, so this file exists and the research
 rounds become what they always were: **evidence, kept verbatim, not a design record
@@ -13,9 +15,9 @@ you are expected to diff by hand.**
 
 Reading order: this file for the design, [`docs/plan.md`](plan.md) for what is being
 built next, [`docs/test-design.md`](test-design.md) for the test contract. Which document
-supersedes or partly overturns which will be recorded in `docs/INDEX.md`, which lands in
-the next PR (`docs/plan.md` §3, R0b-2); until then §4.4 below carries the retractions that
-matter, which is the reason that section exists.
+supersedes or partly overturns which is recorded in [`docs/INDEX.md`](INDEX.md), and §4.4
+below carries the three retractions that have to be read even by someone who never opens
+the index.
 
 Two rules govern this file, because a design document is the easiest file in a
 repository to let rot:
@@ -50,15 +52,19 @@ against `infra/dormant_seams.tsv` in both directions.
 
 **The honest summary is one sentence:** promise 1 works, promises 2–5 are built,
 tested offline, and not connected — the six dormant subsystems are **3,492 production
-lines plus 5,488 test lines = 8,980**, against 34,794 python lines in the tree on
-2026-08-25, so **25.8%**.
+lines plus 5,488 test lines = 8,980**, against 35,507 python lines in the tree on
+2026-08-26, so **25.3%** (it read 25.8% against 34,794 lines a round ago — see below).
 
 That percentage is the weakest number on this page and it is worth saying why. Its
 denominator is the whole tree, so **writing more tests anywhere makes the dormancy
-figure fall without connecting anything** — this round's own census moved it from 26.6%
-to 25.8% by adding 1,042 lines (`infra/wiring_census.py` 454 + `tests/test_wiring_census.py`
-588) that have nothing to do with the six subsystems. The count of *seams* is the number that behaves: `infra/wiring_census.py`
-reports **42** today, `infra/dormant_seams.tsv` carries all 42 with a named reason, and
+figure fall without connecting anything** — and it has now done so twice in two rounds
+without a single subsystem being wired. R0b-1's census moved it from 26.6% to 25.8% by
+adding 1,042 lines (`infra/wiring_census.py` 454 + `tests/test_wiring_census.py` 588);
+R0b-2 moved it to 25.3% by adding 713 more (`infra/doc_status.py`,
+`tests/test_doc_status.py` and the widened gates), and this PR is *about* documentation
+status. A number that improves when you write a document about documents is not measuring
+what its name says. The count of *seams* is the number that behaves: `infra/wiring_census.py`
+reports **43** today, `infra/dormant_seams.tsv` carries all 43 with a named reason, and
 every R1 PR is required to delete at least one row. Quote the seam count; treat the
 percentage as scenery.
 
@@ -284,7 +290,11 @@ correction, and the correction was only found by going to the sources.**
 
 - **`memory/store.py` is not being split.** Its 1045 lines do hold three concerns
   (schema vocabulary, data-root policy, the writer), but splitting re-anchors all
-  **15 named mutants** in `tests/test_store.py` and adds an import edge. The chosen
+  **15 mutation cases** in `tests/test_store.py` — 18 named mutants across them, because
+  the position check applies four in one test — and adds an import edge. Earlier drafts of
+  this line said "15 named mutants", which is the collected *case* count wearing the
+  mutant count's label; the two are now separated because `infra/doc_counts.py` gates the
+  first and cannot derive the second. The chosen
   fix is to make the schema surface explicit with block headers and an exported list,
   in place.
 - **`infra/arch_render.py`'s 1118 lines are not being refactored.** The
@@ -357,34 +367,71 @@ section is shaped to avoid.
 
 ## 7. How this file is kept from rotting
 
-Four mechanisms. Three are in force as of this PR; the first lands in the next one
-(`docs/plan.md` §3, R0b-2), and the shape of it is already fixed:
+Four mechanisms, all four in force as of this PR:
 
-1. **`docs/INDEX.md` plus `infra/doc_status.tsv`** will give every document under `docs/` a
-   status from a closed set and, where applicable, a named successor — including the
-   form *overturned in part*, because §4.4's case (measurements stand, the citation
-   does not) is not the same as superseded and a two-value column would have flattened
-   it. A new document cannot join silently, a stale row is a finding, and the check runs
-   in both directions.
+1. **[`docs/INDEX.md`](INDEX.md) plus `infra/doc_status.tsv`** give every document under
+   `docs/` a status from a closed set and, where applicable, a named successor — including
+   the form *overturned in part*, because §4.4's case (measurements stand, the citation
+   does not) is not the same as superseded and a two-value column would have flattened it.
+   Round 4 is why the relation column is `;`-joined rather than single-valued: it has two
+   independent overturners, and one slot would have forced dropping one of them while the
+   row read as complete. A new document cannot join silently, a stale row is a finding, and
+   `infra/doc_status.py` checks the index against the table against the directory in all
+   three directions. It also reads the attribution sentence in §0 of this file, because an
+   earlier draft of that sentence credited round 7 with overturning round 4 and round 7
+   never names round 4 except to cite it approvingly — prose about which document overturns
+   which is exactly as unverified as any other prose.
 2. **§1's dormancy claims are reconciled against the tree, in both directions**, by
    `infra/wiring_census.py`, so an R1 PR that wires a subsystem without deleting its
-   row goes red. **The rest of this file's numbers are not gated yet, and saying so
-   precisely matters more than the mechanism does.** `infra/doc_counts.py` reconciles
-   case, mutant and module counts against `pytest --collect-only` — but its `DOCS`
-   tuple is `docs/test-design.md`, `README.md`, `README.zh-TW.md`. **This file is not
-   in it**, so the one collected-case count quoted above (62, in I8) is hand-checked,
-   not gated. A guard's scope is a claim, and the honest version of this row is that
-   the scope excludes the document you are reading. Widening `DOCS` to cover
-   `docs/design.md` and `docs/plan.md` — with the mutant that proves the widening
-   actually reads them — is an R0b-2 item in `docs/plan.md` §3.
+   row goes red. **And the numbers in this file are now gated too, which they were not
+   when this section was first written.** `infra/doc_counts.py` reconciles case, mutant
+   and module counts against `pytest --collect-only`, and its `DOCS` tuple was
+   `docs/test-design.md`, `README.md`, `README.zh-TW.md` — so the collected-case count
+   quoted above (62, in I8) sat hand-checked inside a document whose whole argument is that
+   hand-checked numbers rot. R0b-2 widened the tuple to this file, its Chinese edition,
+   `docs/plan.md` — and `pytest.ini`, which is not a document at all. The `mutation`
+   marker's help text carries the whole-layer wall-clock figures so they sit beside the
+   marker they describe, and they were two rounds stale: prose explaining why a duration
+   must be re-measured every round, quoting a 1512-case suite with 304 mutants. Membership
+   in that tuple is therefore *a file that quotes one of these numbers*, never *a file under
+   `docs/`*. Two further details of the widening are worth keeping, because both were
+   mistakes first: adding a path only makes a file *readable*, so nothing is checked until a
+   pattern quotes a number out of it — every mutant therefore changes a number in a
+   document rather than shrinking the tuple. And I8's sentence quotes **two** quantities,
+   62 cases from 38 test functions, which needed two derivations; one derivation checking
+   both would have left the gap between them free to drift.
+
+   The widening also found where the checks were *narrow* rather than absent. A §0 row in
+   `docs/test-design.md` states two numbers — how many cases the module collects and how many
+   of those the mutation layer selects — and only the first had ever been read. Comparing the
+   second found three wrong rows on its first run: one saying 13 where the layer collected 12,
+   and two stating a breakdown of named mutants (17 + 1, 8 + 2) with no total at all, so
+   collection had no number to disagree with. **A breakdown is not a total**: 17 + 1 is 18
+   only to a reader who adds it up, and a gate does no arithmetic. The same three-line pattern
+   holds for prose: a module's count appears in the table *and* in the paragraphs discussing
+   it, and the table check reads only the table — which is how the original 25-vs-23 pair
+   survived four lines apart. Those sites are now found by scanning the document for the
+   phrasing rather than by listing them, so a paragraph written next month is checked the day
+   it is written; zero sites is a finding, because zero means the phrasing moved.
 3. **Every "not doing" in §4 keeps its state label.** When evidence arrives that moves
    an item between §4.1, §4.2 and §4.3, the move *is* the edit — not a rewrite that
    erases which state it used to be in.
 4. **Numbers whose derivation is not automated carry their date and their
-   denominator.** §1's 25.8%, §5's line counts and §2's latency figures each say what
+   denominator.** §1's 25.3%, §5's line counts and §2's latency figures each say what
    they were measured against and when, because the alternative — a bare percentage — is
    the form in which a stale number survives longest. Where this file corrects an
-   earlier claim (§1's 26.6%, §5's "932 lines", §6's Guardrails entry), the correction
-   says what the old number was. A correction that hides the thing it replaced asks the
+   earlier claim (§1's 26.6% and then its 25.8%, §5's "932 lines", §6's Guardrails
+   entry), the correction says what the old number was. §1's percentage has now been
+   corrected twice in two rounds, which is the argument for quoting the seam count
+   instead: the count moves when a seam moves, and the percentage moves when anyone
+   adds a test anywhere. A correction that hides the thing it replaced asks the
    next reader to trust it, and this file's whole argument is that trust is not the
-   mechanism.
+   mechanism. A timing number carries two more things — its **n** and the machine's
+   **load** — because a narrow interval is not evidence of stability: the first two
+   whole-suite passes this round read 239.4 s and 239.4 s, identical to the tenth of a
+   second, and six further passes of the same command on the same tree spanned **137 s**.
+   That width then dissolved three conclusions the two-pass version had already stated
+   (that the machine was slower under load, that the parts summed to less than the whole,
+   and that this round was slower than the last), which is why
+   [`docs/test-design.md`](test-design.md) §3 now writes an n beside every interval and
+   records where it stopped adding passes.
