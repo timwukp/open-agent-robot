@@ -1,9 +1,12 @@
 """memory_node — the single writer, and in S3 the publisher of the seed profile card.
 
 Publishes /memory/profile (String, JSON) with `transient_local` durability: the
-card's `as_dict()`, once, at boot. Subscribes to nothing yet — the episode stream
-arrives in S4 and this node is where it will land, because a second writer would
-break the atomicity `memory/store.py` exists to provide.
+card's `as_dict()`, once, at boot. As of R1.1 it also subscribes to /memory/audit and
+appends what arrives there, which is how "one writer" survives a second node having
+something to record: `agent_node` composes a turn and publishes the record instead of
+opening the file, because a second writer would break the atomicity — and the ordering
+guarantee — that `memory/store.py` exists to provide. The episode stream (R1.3) lands
+here too, for the same reason and through the same shape.
 
 **Why `transient_local` and why no republish timer.**
 `agent_node` needs the card on its very first turn, and it starts in whatever order
@@ -50,6 +53,12 @@ from memory import store as st
 TOPIC = "/memory/profile"
 HUD_TOPIC = "/game/events_out"
 
+# The single writer's inbox. Any node with something for `audit.jsonl` publishes here
+# instead of opening the file, which is what keeps "one writer" true for code that has
+# never heard of this module. agent_node holds a pinned copy of this name — see
+# tests/test_profile_wiring.py, which reads both assignments by AST.
+AUDIT_TOPIC = "/memory/audit"
+
 # The character-proxy calibration, measured once against a real `usage.inputTokens`
 # and justified where that measurement is recorded, in tests/test_skills_loader.py.
 # It is passed into `profile.budget_findings` rather than imported by it, because a
@@ -90,6 +99,36 @@ class MemoryNode(Node):
             "kinds": sorted({f.kind for f in card.facts}),
             "locked": st.is_locked(pf.CARD_NAME),
         })
+
+        # Created last, so `profile_loaded` is seq 1 on every boot: the record saying
+        # what the robot knew when it started must not be able to land behind a record
+        # from a node that started first.
+        self.create_subscription(String, AUDIT_TOPIC, self.on_audit, 10)
+
+    def on_audit(self, msg: String) -> None:
+        """Append one audit record produced by another node — the single-writer hop.
+
+        This callback deliberately does **not** pre-validate the record. `check_audit`
+        runs inside `Store.append`, and a second checker of one format is a second thing
+        that has to be kept in step; the writer's refusal is the one that decides what
+        is on disk, so it is the only one worth having. What this method does own is that
+        a refusal must not take the node down: a malformed record from another node is a
+        defect in that node, not a reason for the robot to lose its memory for the rest
+        of the session. So it is logged, and the log line names what was refused.
+
+        The `seq` in the success line is the store's own, which is what makes this a
+        receipt rather than a hope: `append` returns the sequence number it took, and a
+        record refused for its contents never takes one — a gap in `audit.jsonl` is
+        indistinguishable from a deleted record.
+        """
+        try:
+            record = json.loads(msg.data)
+            seq = self.store.append("audit", record)
+        except Exception as exc:                                    # noqa: BLE001
+            self.get_logger().error(f"rejected audit record ({exc})")
+            return
+        self.get_logger().info(
+            f"audit record {record.get('kind')!r} appended as seq {seq}")
 
 
 def main() -> None:

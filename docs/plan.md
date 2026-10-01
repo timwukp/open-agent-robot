@@ -30,27 +30,31 @@ vocabularies and a reader who does not know that will misread both:
 
 | Track | What it is | Status | Evidence |
 |---|---|---|---|
-| **A** | Memory, disclosure and the moral boundary: S0 → S8 | **Offline half complete, S0 through S8.** Every module exists, is tested offline, and the S-stage that built it is recorded per T-ID in `docs/test-design.md` §2. **The on-robot half is not connected** — see the seam count below | `docs/test-design.md` §2.A–§2.L; the dormancy is `infra/dormant_seams.tsv` (43 rows) |
+| **A** | Memory, disclosure and the moral boundary: S0 → S8 | **Offline half complete, S0 through S8.** Every module exists, is tested offline, and the S-stage that built it is recorded per T-ID in `docs/test-design.md` §2. **The on-robot half is not connected** — see the seam count below | `docs/test-design.md` §2.A–§2.L; the dormancy is `infra/dormant_seams.tsv` (41 rows) |
 | **B** | The rock-paper-scissors layer: the only non-LLM reward signal in the system | **Wired and playing, and amnesic every boot.** `game/opponent.py` runs; `game_node` publishes each resolved round on `/game/rps_round`; nothing subscribes, so the transition table is empty at every start and the ledger's own arithmetic gives **~120 rounds of a 1/3 coin** (81 order-2 contexts) | the `/game/rps_round` and `/memory/rps_table` rows of `infra/graph_gaps.tsv`, counted as one gap from both ends |
 | **C** | On-machine measurement | **2 of 5 done.** K3 (Guardrails latency) and K5 shipped; **K1, K2, K4 are blocked** — all three must run on the instance, and the security group is `/32`-restricted pending a human | `docs/test-design.md` §2.K and the L4 row of §3; blockers in [`docs/design.md`](design.md) §6 |
 
 **The one number to quote is the seam count, not a percentage.** `infra/wiring_census.py`
-reports **43** seams reachable only under `pytest`, and `infra/dormant_seams.tsv` carries 43
+reports **41** seams reachable only under `pytest`, and `infra/dormant_seams.tsv` carries 41
 rows with named reasons, checked in both directions. The ratio of dormant lines to tree
-lines (25.3% on 2026-08-26, down from 25.8% on 2026-08-25 with nothing wired) falls whenever tests are added anywhere, including tests that
-wire nothing — [`docs/design.md`](design.md) §1 derives why.
+lines (24.2% of 37,062 on 2026-08-26, quoted from 25.3% a round earlier) falls whenever
+tests are added anywhere, including tests that wire nothing — and R1.1 is the round that
+proves both halves of that: it wired a subsystem, and 600 of its ~700 new lines are tests,
+so the figure would have moved about as far had it wired nothing.
+[`docs/design.md`](design.md) §1 derives why, and writes down the `find` walk behind the
+denominator because the three earlier readings did not.
 
 **What R1 has to close, derived from the manifests rather than remembered:**
 
 | Manifest | Rows naming a stage | Which stage |
 |---|---|---|
-| `infra/dormant_seams.tsv` | 3 | R1.1 (`assemble(card=)`, `audit_payload()`, `unlock_for_s5()`) |
-| | 4 | R1.3 (`memory/segment.py`, `salience.stamp()`, `consolidate()`, `known_ids()`) |
+| `infra/dormant_seams.tsv` | 0 | R1.1 — **landed.** It deleted `assemble(card=)` and `audit_payload()`, and re-classified the third |
+| | 5 | R1.3 (`memory/segment.py`, `salience.stamp()`, `consolidate()`, `known_ids()`, and `store.unlock_for_s5()` — R1.1 moved that last one here) |
 | | 1 | R1.4 (`assemble(recall=)`) |
 | | 3 | R1.5 (`memory/erase.py`, `recall.deletion_findings()`, `guard.forget_request()`) |
 | | 4 | R1.6 (`safety/output_guard.py`, `guard.clamp_reply()`, and the two `defect` rows) |
 | | 1 | R6.1 (`agent/tools.py::reconcile()`) — §9 |
-| `infra/graph_gaps.tsv` | 3 `pending` | R1.1 (`/memory/profile`), R1.2 (`/game/rps_round` + `/memory/rps_table`) |
+| `infra/graph_gaps.tsv` | 2 `pending` | R1.2 (`/game/rps_round` + `/memory/rps_table`) — R1.1's `/memory/profile` row is gone |
 | | 1 `pending` | **none** — `/game/events`, see R1.7 |
 
 R1.2 is the one wiring PR that deletes **no** `dormant_seams.tsv` row: its work is entirely
@@ -177,7 +181,7 @@ L4 needs the machine.
 
 | # | PR | What changes | Rows deleted | The real risk |
 |---|---|---|---|---|
-| **R1.1** | `/memory/profile` → `agent_node` | Subscribe latched; pass `card` into `assemble`; call `audit_payload()` → `guard.audit_record`; turn `unlock_for_s5()` | 3 seams + 1 graph gap | **Not wiring — a design decision.** `assemble` runs once in `__init__` while the card arrives asynchronously. R1.1 must decide what a turn that beats the card does, and emit a finding for it rather than silently composing a card-less prompt |
+| **R1.1** | `/memory/profile` → `agent_node` — **landed** | Subscribes latched with the publisher's durability; passes `card` into `assemble`; recomposes the prompt when the card arrives; the composed turn travels one hop on `/memory/audit` to the single writer | **2 seams + 1 graph gap** (planned as 3 seams: `unlock_for_s5()` was R1.3's all along, and R1.1 is the round that had to say so) | **Not wiring — a design decision**, and three of the four came out that way. `assemble` runs once in `__init__` while the card arrives asynchronously, so a turn that beats the card emits a finding rather than silently composing a card-less prompt. The plan said "call `audit_payload()` → `guard.audit_record`"; `store.check_audit` **refuses that composition in both directions**, so the record is built for the schema the single writer accepts and the refuted docstring became two `pytest.raises` assertions. And the plan's third seam belonged to another stage: the lock's reason is provenance, and there are no episodes to name until R1.3 |
 | **R1.2** | The RPS pair | `memory_node` subscribes `/game/rps_round`; publishes `/memory/rps_table` latched | 2 graph gaps | The pair must be wired at both ends or neither — the ledger counts it as one gap from both sides. Table round-trip is already covered by T-H5; the node half is new |
 | **R1.3** | Episode streaming | `memory_node` subscribes `/speech/asr`, `/detections`, `/game/events_out`; runs `segment` → `salience.stamp` → `consolidate` → `store.append` | 4 seams | The single-writer invariant: only `memory_node` may persist. The 45 s silence must be timed *by `memory_node`*, because `asr_node` publishes nothing during silence — there is no message whose absence a subscriber could notice |
 | **R1.4** | `/memory/recall` service | `memory_node` serves it; `agent_node` calls it from a worker thread with a **150 ms** hard deadline, falling back to the file card | 1 seam (which alone holds 1,757 production lines dormant) | **Must not** use `spin_until_future_complete` — that spins a second executor against the single spin at `agent_node.py:203`. Whether 150 ms is even achievable is **T-K4**, which is blocked (§1, Track C) |
@@ -185,8 +189,9 @@ L4 needs the machine.
 | **R1.6** | The output guard | `OutputGuard` into the say path; verdict routes through the existing `/speech/interrupt` → `T_FLUSH`; `clamp_reply()`, `gesture_findings()` and `spoken_text()` replace the inline regexes at `agent_node.py:264-269` | 2 seams + **the 2 `defect` rows** | Last, because it is the only one that can be structurally correct and still fail on real latency. It is also the only one that removes a **duplicate implementation** rather than adding a call — see [`docs/design.md`](design.md) §3, D1. It depends on `ws_gateway.py:72`, the one line mapping `/speech/interrupt` to the `T_FLUSH` byte, which **no test asserts today** (§7) |
 | **R1.7** | `/game/events` — **decide, don't defer** | Either wire it (`game_node` accepting browser events, which today it does not: it takes commands only on `/game/cmd`) or reclassify it | 1 graph gap | This row is `pending` and **names no stage**. It became visible only by deriving R1's coverage from the manifests instead of from the plan, and it is the one pending gap the six PRs above do not close. Its own reason says "voice is the wired path", which is an argument for reclassifying to `unused` with a written reason — but leaving it `pending` forever is the failure mode the class set exists to prevent |
 
-**Order, and why it is a dependency order rather than a preference.** R1.1 is smallest and
-carries the heaviest promise. R1.2 must wire both ends. R1.3 must precede R1.4 (recall has
+**Order, and why it is a dependency order rather than a preference.** R1.1 was smallest and
+carries the heaviest promise; it landed, and it was smallest only in wiring — most of its
+diff is the four census and document gates that one new topic turned red. R1.2 must wire both ends. R1.3 must precede R1.4 (recall has
 nothing to retrieve until episodes are written) and precedes R5 entirely (§8). R1.6 is last.
 
 ---

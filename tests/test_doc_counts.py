@@ -74,6 +74,7 @@ ROW_L3_DRIFT = ('        elif int(said[0]) != observed_l3:')
 ROW_L3_UNNUMBERED = ('            if observed_l3:')
 PROSE_CASES_LOOP = ('    for path, said in prose_cases:')
 PROSE_CASES_RAN = ('    if not prose_cases:')
+WRAP_NORMALISE = ('    found = re.findall(pattern, re.sub(r"\\s+", " ", text), re.S)')
 
 
 # --------------------------------------------------------------- observed reality
@@ -229,13 +230,25 @@ def real_value(kind: str, observed: dict) -> int:
 
 def bump(docs: dict[str, str], doc: str, template: str, kind: str,
          observed: dict) -> dict[str, str]:
-    """Replace one quoted figure with a wrong one, leaving everything else alone."""
+    """Replace one quoted figure with a wrong one, leaving everything else alone.
+
+    The phrase is matched with each space allowed to be any run of whitespace, for the
+    same reason `doc_counts.quoted` collapses whitespace before matching: a markdown
+    paragraph's line breaks are not part of its prose. A literal `str.replace` here made
+    this case go red the day a paragraph in `design.md` was re-wrapped — and it went red
+    with `the case is vacuous`, which reads as "this assertion checks nothing" rather
+    than "the phrase moved to the next line". Two readers of one format have to agree on
+    what the format is, or the one that is only in the test drifts.
+    """
     real = real_value(kind, observed)
     old = template.format(real)
-    assert docs[doc].count(old) == 1, f"the case is vacuous: {old!r} appears " \
-                                     f"{docs[doc].count(old)} times in {doc}"
+    pattern = r"\s+".join(re.escape(part) for part in old.split(" "))
+    hits = re.findall(pattern, docs[doc])
+    assert len(hits) == 1, f"the case is vacuous: {old!r} appears " \
+                           f"{len(hits)} times in {doc}"
     patched = dict(docs)
-    patched[doc] = docs[doc].replace(old, template.format(real + 7))
+    patched[doc] = re.sub(pattern, template.format(real + 7).replace("\\", "\\\\"),
+                          docs[doc], count=1)
     return patched
 
 
@@ -356,6 +369,50 @@ def test_a_sentence_appearing_twice_is_a_finding(docs, observed) -> None:
     findings = run(patched, observed)
     assert len(findings) == 1, findings
     assert "appears 2 times" in findings[0]
+
+
+def test_rewrapping_a_paragraph_is_not_a_reworded_sentence(docs, observed) -> None:
+    """The other half of rule 5, and the half R1.1 needed: a markdown line break is not prose.
+
+    `README.md`'s sentence is re-wrapped at the space before the number — every word
+    untouched, one space become a newline. Before R1.1 this reported `cannot check the suite
+    total`, which is a true statement about the pattern and a false one about the document,
+    and the cheapest way out of it is to un-wrap the paragraph instead of fixing the pattern.
+    """
+    total = sum(observed["per_file"].values())
+    patched = dict(docs)
+    patched["README.md"] = docs["README.md"].replace(
+        f"Offline suite, {total} cases", f"Offline suite,\n{total} cases")
+    assert patched["README.md"] != docs["README.md"], "the wrap target is no longer present"
+    assert run(patched, observed) == [], "a re-wrapped line is being read as a reword"
+
+
+@pytest.mark.mutation
+def test_mutant_reading_the_raw_text_calls_a_line_wrap_a_reword(
+        docs, observed, tmp_path: Path) -> None:
+    """Removing the whitespace collapse turns line wrapping into phantom rewords.
+
+    Two demonstrations, because the second one alone would be a synthetic case. The
+    first is that the mutant is red on **the tree as shipped**: `docs/design.md` really
+    does wrap "carries all 41 with a named reason" across a line, so the mutant reports a
+    reword that never happened. The second adds one more by re-wrapping `README.md`, which
+    shows the finding count tracks the wraps rather than being a single fixed complaint.
+    """
+    mutant = load_mutant(tmp_path,
+                         (WRAP_NORMALISE, "    found = re.findall(pattern, text, re.S)"))
+    as_shipped = mutant.audit(dict(docs), **kw(observed))
+    assert len(as_shipped) == 1, as_shipped
+    assert "cannot check the dormant seam count" in as_shipped[0]
+    assert "no longer in the document" in as_shipped[0]
+
+    total = sum(observed["per_file"].values())
+    patched = dict(docs)
+    patched["README.md"] = docs["README.md"].replace(
+        f"Offline suite, {total} cases", f"Offline suite,\n{total} cases")
+    assert patched["README.md"] != docs["README.md"], "the wrap target is no longer present"
+    rewrapped = mutant.audit(patched, **kw(observed))
+    assert len(rewrapped) == 2, rewrapped
+    assert any("cannot check the suite total" in f for f in rewrapped), rewrapped
 
 
 def test_the_seam_count_is_the_registry_row_count_and_not_its_line_count(observed) -> None:

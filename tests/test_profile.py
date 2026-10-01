@@ -564,16 +564,49 @@ def test_the_node_does_not_render_the_block_itself() -> None:
 
 def test_the_node_is_the_only_python_file_that_publishes_the_profile_topic() -> None:
     """Two publishers of a `transient_local` topic is two cards, and which one a late
-    joiner receives depends on subscribe timing."""
-    scanned, publishers = 0, []
-    for path in sorted(REPO_ROOT.rglob("*.py")):
-        if "__pycache__" in path.parts or path.parts[-2] == "tests":
-            continue
-        scanned += 1
-        if "/memory/profile" in path.read_text(encoding="utf-8"):
-            publishers.append(str(path.relative_to(REPO_ROOT)))
-    assert scanned >= 15, f"only {scanned} files scanned — the walk went blind"
-    assert publishers == ["memory/memory_node.py"], publishers
+    joiner receives depends on subscribe timing.
+
+    **The derivation is the finding here, not the result.** This test used to scan every
+    production file for the substring `"/memory/profile"` and assert the hit list was
+    exactly `["memory/memory_node.py"]`. A substring cannot tell a publisher from a
+    subscriber, from a docstring, or from a comment — so R1.1, whose entire content is
+    adding the **consumer** this topic was waiting for, turned it red for a reason it was
+    never about. And the cheapest way past that red is to add `agent/agent_node.py` to
+    the expected list, which would then also excuse a real second publisher there.
+    A discovery pattern is a claim: this one claimed to find publishers and found
+    mentions.
+
+    It now asks `infra/ros_census.py`, the one reader of the topic graph, which resolves
+    each topic argument through the module's own constants — so `TOPIC` in memory_node and
+    `PROFILE_TOPIC` in agent_node are both read as the topic they name, and a mention in
+    prose is not an edge. The subscriber side is asserted too, because "exactly one
+    publisher" and "somebody is listening" are two claims and the pair is what makes the
+    latched card arrive at all.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "infra"))
+    from ros_census import census  # noqa: PLC0415
+    _nodes, _edges, topics = census(REPO_ROOT)
+    assert len(topics) >= 10, (f"only {len(topics)} topics censused — the graph walk "
+                               "went blind and every claim below would hold vacuously")
+    topic = topics.get(pf_topic_name())
+    assert topic is not None, sorted(topics)
+    assert topic.pub == ["memory"], topic.pub
+    assert topic.sub == ["agent"], topic.sub
+
+
+def pf_topic_name() -> str:
+    """The profile topic, read out of memory_node's own assignment rather than typed.
+
+    A literal here would be a third copy of the name — the node has one, agent_node has
+    a pinned copy — and the copy in a test is the one that keeps passing after a rename.
+    """
+    tree = ast.parse(MEMORY_NODE_PY.read_text(encoding="utf-8"))
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "TOPIC" for t in stmt.targets):
+            assert isinstance(stmt.value, ast.Constant), ast.dump(stmt.value)
+            return stmt.value.value
+    raise AssertionError("memory/memory_node.py no longer assigns TOPIC")
 
 
 # ================================================================ layer L3: mutants
@@ -793,6 +826,42 @@ def test_a_boot_that_only_logs_the_budget_finding_publishes_it_anyway(tmp_path) 
     assert len(mutant.boot_card(root, ratio)) == 40
     with pytest.raises(pf.ProfileError, match="resident block"):
         pf.boot_card(root, ratio)
+
+
+@pytest.mark.mutation
+def test_a_second_publisher_of_the_card_is_not_read_as_a_subscriber() -> None:
+    """The mutant the substring census could not have had, which is why it is here.
+
+    The check above was rewritten this round because a scan for the text
+    `"/memory/profile"` counted mentions and called them publishers. The property that
+    replaced it — the census distinguishes `create_publisher` from
+    `create_subscription` — is exactly what no mutant could have tested before, because
+    the old derivation gave the same answer either way.
+
+    So the mutation is applied to agent_node's edge itself: turn the consumer R1.1 added
+    into a second publisher of a latched topic. `edges_in` is the census's own parser and
+    takes source text, so the mutant needs no file on disk and the real tree is untouched
+    (asserted by the control half below, which reads `kind == "sub"` from the shipped
+    source in the same call).
+    """
+    sys.path.insert(0, str(REPO_ROOT / "infra"))
+    from ros_census import edges_in  # noqa: PLC0415
+    agent_node = REPO_ROOT / "agent" / "agent_node.py"
+    src = agent_node.read_text(encoding="utf-8")
+    topic = pf_topic_name()
+    anchor = "self.create_subscription(String, PROFILE_TOPIC, self.on_profile,"
+    assert anchor in src, f"mutant anchor no longer in {agent_node.name}: {anchor!r}"
+
+    def kinds(source: str) -> set[str]:
+        return {e.kind for e in edges_in(source, "agent", "agent/agent_node.py")
+                if e.topic == topic}
+
+    assert kinds(src) == {"sub"}, "the shipped agent_node is not a subscriber of the card"
+    mutant = src.replace(
+        anchor, "self.create_publisher(String, PROFILE_TOPIC, ", 1)
+    assert kinds(mutant) == {"pub"}, (
+        "the census reports a create_publisher call as something other than a publisher, "
+        "so `topic.pub == ['memory']` cannot notice a second card producer")
 
 
 def test_the_store_module_is_unpolluted_after_the_mutants() -> None:

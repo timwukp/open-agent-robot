@@ -45,28 +45,41 @@ against `infra/dormant_seams.tsv` in both directions.
 | # | Promise | Reaches | Evidence |
 |---|---|---|---|
 | 1 | **It hears, sees, speaks, moves — and discloses that it is a machine** | **Running end to end.** | The demo runbook [`docs/DEMO.md`](DEMO.md); Art 50(1) is spoken by `gateway/ws_gateway.py:105-119` through `safety/disclosure.py` on `/speech/say` with no LLM in the path, asserted by `tests/test_disclosure.py` (T-E1) |
-| 2 | **It remembers you** | **Code complete, runtime dormant.** `agent/context.py:261 assemble()` takes `card` and `recall`; `agent/agent_node.py:83` passes neither, so `memory/recall.py`, `memory/consolidate.py` and `memory/salience.py` never execute a line at runtime and `memory/segment.py` is loaded by no node. | Three rows in `infra/dormant_seams.tsv` (`assemble(card=)`, `assemble(recall=)`, `memory/segment.py`), plus `/memory/profile` in `infra/graph_gaps.tsv`. Wired by R1.1, R1.3 and R1.4 |
+| 2 | **It remembers you** | **The card is wired; the episodes are not.** R1.1 subscribed `agent_node` to the latched `/memory/profile` and passes `card=` into `assemble()`, so a hand-written profile reaches the prompt of the running robot and a turn that beats the card leaves an audit record. Everything downstream of *writing* memory is still dormant: `memory/recall.py`, `memory/consolidate.py` and `memory/salience.py` execute no line at runtime and `memory/segment.py` is loaded by no node, so the robot remembers only what a human typed into `profile.json`. | For the wired half: `tests/test_profile_wiring.py`, and `/memory/profile` no longer has a row in `infra/graph_gaps.tsv`. For the dormant half: `assemble(recall=)` and `memory/segment.py` in `infra/dormant_seams.tsv`. Wired by R1.3 and R1.4 |
 | 3 | **You can tell it to forget** | **Recognised, not acted on.** `safety/guard.py:403 forget_request()` already recognises a deletion request in Chinese and English, and has no caller — so the robot can be asked to forget and will not. `memory/erase.py` is loaded by no node. | Two rows in `infra/dormant_seams.tsv`; `tests/test_guard.py:125` and `:543` cover the recogniser itself. Wired by R1.5 |
 | 4 | **It cannot be talked past its boundaries** | **Half wired, and the dormant half is the output side.** The input side is live: the constitution is loaded on every turn and the L0 stop reflex is deterministic. `safety/output_guard.py` — the side that inspects what the robot is about to *say* — is loaded by no node, and two functions in the live `safety/guard.py` have a second, weaker implementation inline in `agent_node` (see §3, defect D1). | `tests/test_guard.py` (which cites T-D1..T-D4) for the live half. For the dormant half the repo says so in its own data: `agent/tools.py`'s `EGRESS[SAY]` row carries `enforcement=NOT_WIRED`, and two `defect` rows sit in `infra/dormant_seams.tsv`. Wired by R1.6 |
 | 5 | **It actually plays against you** | **Wired but amnesiac.** `game/opponent.py` runs, and `game_node` publishes each resolved round to `/game/rps_round` — which no node subscribes to. The transition table therefore starts empty every boot, and the ledger's own arithmetic says the first ~120 rounds fall back to a 1/3 coin (81 order-2 contexts). | The paired rows `/game/rps_round` + `/memory/rps_table` in `infra/graph_gaps.tsv`, which the gate requires to be wired at both ends or neither. Wired by R1.2 |
 
-**The honest summary is one sentence:** promise 1 works, promises 2–5 are built,
-tested offline, and not connected — the six dormant subsystems are **3,492 production
-lines plus 5,488 test lines = 8,980**, against 35,507 python lines in the tree on
-2026-08-26, so **25.3%** (it read 25.8% against 34,794 lines a round ago — see below).
+**The honest summary is two sentences now, and that is the point of R1.1:** promise 1
+works, promise 2 reaches the prompt for the first time but only for facts a human typed,
+and promises 3–5 are built, tested offline, and not connected. The six dormant subsystems
+are **3,492 production lines plus 5,488 test lines = 8,980**, against **37,062** python
+lines in the tree on 2026-08-26, so **24.2%**.
+
+**The walk behind that denominator is written down here because the last two rounds' were
+not.** It is `find . -name '*.py' -not -path './.git/*' -not -path '*/__pycache__/*' |
+xargs wc -l`, which includes `tests/`, `.push/` and `web/`. Earlier rounds quoted 26.6%,
+25.8% and 25.3% without recording how the tree was counted, so this round could not
+reproduce 35,507 to within 1,249 lines and **the movement from 25.3% to 24.2% must not be
+read as progress** — part of it is a different walk and part of it is 600 new lines of
+test. A number whose derivation is not written down cannot be compared to itself, which
+is §D item 4's rule applied one level deeper than it was written.
 
 That percentage is the weakest number on this page and it is worth saying why. Its
 denominator is the whole tree, so **writing more tests anywhere makes the dormancy
-figure fall without connecting anything** — and it has now done so twice in two rounds
-without a single subsystem being wired. R0b-1's census moved it from 26.6% to 25.8% by
+figure fall without connecting anything** — and it did so twice in the two rounds before
+this one, neither of which wired a single subsystem. R0b-1's census moved it from 26.6% to 25.8% by
 adding 1,042 lines (`infra/wiring_census.py` 454 + `tests/test_wiring_census.py` 588);
-R0b-2 moved it to 25.3% by adding 713 more (`infra/doc_status.py`,
-`tests/test_doc_status.py` and the widened gates), and this PR is *about* documentation
+then R0b-2 moved it to 25.3% by adding 713 more (`infra/doc_status.py`,
+`tests/test_doc_status.py` and the widened gates) — a PR that was *about* documentation
 status. A number that improves when you write a document about documents is not measuring
-what its name says. The count of *seams* is the number that behaves: `infra/wiring_census.py`
-reports **43** today, `infra/dormant_seams.tsv` carries all 43 with a named reason, and
-every R1 PR is required to delete at least one row. Quote the seam count; treat the
-percentage as scenery.
+what its name says, and R1.1 shows the other half of the same problem: it wired a real
+subsystem and 600 of its 700-odd new lines are tests, so the figure would have fallen by
+about as much had it wired nothing. The count of *seams* is the number that behaves:
+`infra/wiring_census.py` reports **41** today, `infra/dormant_seams.tsv` carries all 41
+with a named reason, and every R1 PR is required to delete at least one row — R1.1 deleted
+two and re-classified a third, which is the first time this figure moved for the reason it
+exists. Quote the seam count; treat the percentage as scenery.
 
 **What "reaches" means here, stated because it is narrower than it sounds.**
 Reachability is computed on the static call graph from the processes
@@ -417,12 +430,15 @@ Four mechanisms, all four in force as of this PR:
    an item between §4.1, §4.2 and §4.3, the move *is* the edit — not a rewrite that
    erases which state it used to be in.
 4. **Numbers whose derivation is not automated carry their date and their
-   denominator.** §1's 25.3%, §5's line counts and §2's latency figures each say what
+   denominator.** §1's 24.2%, §5's line counts and §2's latency figures each say what
    they were measured against and when, because the alternative — a bare percentage — is
    the form in which a stale number survives longest. Where this file corrects an
-   earlier claim (§1's 26.6% and then its 25.8%, §5's "932 lines", §6's Guardrails
-   entry), the correction says what the old number was. §1's percentage has now been
-   corrected twice in two rounds, which is the argument for quoting the seam count
+   earlier claim (§1's 26.6%, then its 25.8%, then its 25.3%, §5's "932 lines", §6's
+   Guardrails entry), the correction says what the old number was — and R1.1 found the
+   sharper version of this rule: three of those four readings recorded no **walk**, so
+   the fourth could not be compared to them at all, and §1 now writes the `find`
+   invocation down. §1's percentage has now been
+   corrected three times in three rounds, which is the argument for quoting the seam count
    instead: the count moves when a seam moves, and the percentage moves when anyone
    adds a test anywhere. A correction that hides the thing it replaced asks the
    next reader to trust it, and this file's whole argument is that trust is not the
