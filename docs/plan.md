@@ -49,7 +49,8 @@ denominator because the three earlier readings did not.
 | Manifest | Rows naming a stage | Which stage |
 |---|---|---|
 | `infra/dormant_seams.tsv` | 0 | R1.1 — **landed.** It deleted `assemble(card=)` and `audit_payload()`, and re-classified the third |
-| | 5 | R1.3 (`memory/segment.py`, `salience.stamp()`, `consolidate()`, `known_ids()`, and `store.unlock_for_s5()` — R1.1 moved that last one here) |
+| | 2 | R1.3 (`memory/segment.py`, `salience.stamp()`) |
+| | 3 | R1.3b (`consolidate()`, `known_ids()`, `store.unlock_for_s5()` — R1.1 moved the last one out of its own round, and R1.3's scoping moved all three out of R1.3) |
 | | 1 | R1.4 (`assemble(recall=)`) |
 | | 3 | R1.5 (`memory/erase.py`, `recall.deletion_findings()`, `guard.forget_request()`) |
 | | 4 | R1.6 (`safety/output_guard.py`, `guard.clamp_reply()`, and the two `defect` rows) |
@@ -194,7 +195,8 @@ L4 needs the machine.
 | **R1.1** | `/memory/profile` → `agent_node` — **landed** | Subscribes latched with the publisher's durability; passes `card` into `assemble`; recomposes the prompt when the card arrives; the composed turn travels one hop on `/memory/audit` to the single writer | **2 seams + 1 graph gap** (planned as 3 seams: `unlock_for_s5()` was R1.3's all along, and R1.1 is the round that had to say so) | **Not wiring — a design decision**, and three of the four came out that way. `assemble` runs once in `__init__` while the card arrives asynchronously, so a turn that beats the card emits a finding rather than silently composing a card-less prompt. The plan said "call `audit_payload()` → `guard.audit_record`"; `store.check_audit` **refuses that composition in both directions**, so the record is built for the schema the single writer accepts and the refuted docstring became two `pytest.raises` assertions. And the plan's third seam belonged to another stage: the lock's reason is provenance, and there are no episodes to name until R1.3 |
 | **R1.1b** | The launch bootstrap — **not in the original plan** | One line in `memory/memory_node.py` (`sys.path.insert(0, str(Path(__file__).resolve().parent.parent))`) plus `bootstrap_findings()` in `infra/wiring_census.py`, a fourth census granularity that derives the requirement from the runner's launch table | **0** — and that is the point: it deletes no row because the defect was never in a manifest. It was in the space the census assumed | The single writer had **never started**. Launched as a file, its `sys.path[0]` was `memory/`, and `from memory import profile` raised `ModuleNotFoundError` before `rclpy.init()` on every boot from any working directory; the four other launched nodes carry that line and this one did not. Every offline test passed because pytest puts the repo root on `sys.path` first, and the census reported the seams behind that import as *reached* — a **false reached**, the one direction the census exists to make impossible. It ships as its own layer rather than inside R1.2 so a correctness fix does not arrive underneath unreviewed feature wiring |
 | **R1.2** | The RPS pair — **landed** | `memory/rps_state.py` (new, ROS-free); `memory_node` subscribes `/game/rps_round`, persists through `store.write_snapshot`, publishes `/memory/rps_table` latched, and refuses to start on an unreadable table | **2 graph gaps**, deleted together | **Not the node half — the format.** The two ends do not speak one shape and neither is wrong: `game_node.on_rps_table` needs `Opponent.to_dict()`, while `recall.parse_rounds` closes the disk file to `{"version", "rounds"}` *because* `rounds` is the only key an erasure can filter. `Opponent`'s tables are aggregates, so persisting the wire form would keep the fingerprint of a person who asked to be forgotten. Resolved by an asymmetry — deletable rounds on disk, the model derived on read — which is only safe because `Opponent.__post_init__` sums with `fsum`, so a replay reproduces the live table to the last bit. Two further things the plan did not have: `write_snapshot` is **asynchronous**, so the split between `candidate` and `commit` buys bounded drift (at most one round ahead of the disk) and not durability, and the round records carry `episode: None` because a field is free to mandate only before its first writer exists — which makes every R1.2-era round an `ORPHAN` to `recall`, by design, until R1.3 |
-| **R1.3** | Episode streaming | `memory_node` subscribes `/speech/asr`, `/detections`, `/game/events_out`; runs `segment` → `salience.stamp` → `consolidate` → `store.append` | 4 seams | The single-writer invariant: only `memory_node` may persist. The 45 s silence must be timed *by `memory_node`*, because `asr_node` publishes nothing during silence — there is no message whose absence a subscriber could notice |
+| **R1.3** | Episode streaming | `memory_node` subscribes `/speech/asr` and `/detections`, takes `game_round` from the `/game/rps_round` it already subscribes, and runs `segment` → `salience.stamp` → `store.append` | 2 seams | The single-writer invariant: only `memory_node` may persist. The 45 s silence must be timed *by `memory_node`*, because `asr_node` publishes nothing during silence — there is no message whose absence a subscriber could notice. **Two corrections this row used to be wrong about, both derived while scoping it:** it named `/game/events_out`, which cannot be a memory input — that topic has **four** publishers (`game_node`, `hand_node`, `detect_node`, and `memory_node` itself at `memory_node.py:136`), rclpy delivers a node its own publications, and three of the four emit an identically shaped `{"hud": <str>}` payload with no producer field, so a subscriber cannot tell its own boot line from a game event except by an incidental key. And it named `consolidate`, which is now R1.3b |
+| **R1.3b** | Consolidation, and the extractor it needs first | `consolidate()` + `known_ids()` turn candidates into facts under the N ≥ 2 rule; `store.unlock_for_s5()` opens the write half of the profile card | 3 seams | **Its input has no producer, and that is why it is not R1.3.** `observation()` closes a candidate to `{kind, value, channel, episode}` — a shape no stored record has — and no production file names `SELF_REPORTED` or `USER_CONFIRMED` or builds a `channel` field at all. So this is not a call site: it is an extractor that decides which of the closed `PREDICATES` a person asserted about themselves and through which of three channels, and the obvious implementation is the LLM judge [`docs/design.md`](design.md) refuses. `consolidate()` also **raises** on an empty resolvable set, so the first pass on a fresh robot has to be skipped rather than attempted — a receipt-shaped refusal, like R1.2's empty latched table. It is named `R1.3b` rather than given a free number for the reason R1.1b was: same concern, split because it grew past one review |
 | **R1.4** | `/memory/recall` service | `memory_node` serves it; `agent_node` calls it from a worker thread with a **150 ms** hard deadline, falling back to the file card | 1 seam (which alone holds 1,757 production lines dormant) | **Must not** use `spin_until_future_complete` — that spins a second executor against the single spin at `agent_node.py:203`. Whether 150 ms is even achievable is **T-K4**, which is blocked (§1, Track C) |
 | **R1.5** | The deletion path | `guard.forget_request()` → `/memory/forget` → `erase.delete` → `recall.deletion_findings()` → confirmation utterance | 3 seams | The confirmation must be published **after** deletion returns and after the findings verify it, or the robot promises something that has not happened |
 | **R1.6** | The output guard | `OutputGuard` into the say path; verdict routes through the existing `/speech/interrupt` → `T_FLUSH`; `clamp_reply()`, `gesture_findings()` and `spoken_text()` replace the inline regexes at `agent_node.py:264-269` | 2 seams + **the 2 `defect` rows** | Last, because it is the only one that can be structurally correct and still fail on real latency. It is also the only one that removes a **duplicate implementation** rather than adding a call — see [`docs/design.md`](design.md) §3, D1. It depends on `ws_gateway.py:72`, the one line mapping `/speech/interrupt` to the `T_FLUSH` byte, which **no test asserts today** (§7) |
@@ -204,6 +206,15 @@ L4 needs the machine.
 carries the heaviest promise; it landed, and it was smallest only in wiring — most of its
 diff is the four census and document gates that one new topic turned red. R1.1b sits between them for a reason that is not scheduling: it fixes a defect R1.1's own PR message would have been wrong about, so it must land before anything else claims the card reaches a running robot. R1.2 must wire both ends. R1.3 must precede R1.4 (recall has
 nothing to retrieve until episodes are written) and precedes R5 entirely (§8). R1.6 is last.
+
+R1.3b is the one row in that table whose position is not fixed by the others. It must follow
+R1.3, which writes the episodes it reads, and it is **not** a prerequisite for R1.4, R1.5 or
+R1.6 — recall retrieves raw turns, deletion removes records, and the output guard reads
+neither. So it is schedulable at any point after R1.3, and where it actually lands depends on
+a component that does not exist yet rather than on this order. Writing that down is the point
+of splitting it out: as one stage with R1.3, its unbuilt half would have set the size of the
+whole, and "R1.3 is not done" would have been the only available status for a round whose
+streaming half was finished and running.
 
 ---
 
@@ -242,6 +253,20 @@ imports it and asserts its JSON output. See [`docs/design.md`](design.md) §5.
    table with a reason. Range notation (`T-A1..T-A4`) needs a positive control, and section
    tracking must be **load-bearing** — `T-F5` appears once in §2.F and once in the L4 evidence
    table, so removing section tracking must go red.
+
+   **The same gate covers stage ids, and R1.3 is why that item is here.**
+   `infra/wiring_census.py`'s `STAGE_RE` is a *shape* test: a `pending_stage` or `defect` row
+   passes on `R9.9`, a stage no plan contains, and it keeps passing after the stage it names
+   has **landed** — the census only notices the row when the module becomes reached, which is
+   a different event and not guaranteed to happen (R1.3 re-labelled three rows to `R1.3b`
+   by hand, and had it forgotten, every gate would have stayed green with three rows naming
+   a landed stage). Until R1.3 the failure message read "as used in `docs/plan.md`" while
+   nothing read `docs/plan.md` at all, which is the same defect one level up: a gate claiming
+   a membership check it never performed. Both directions belong here because both are
+   membership against one authority, which is exactly what this item already does for T-IDs:
+   every stage id a row names must be a row in this table, and a row may not name a stage
+   this table marks landed. That needs a status column here, which is why it is R3 work and
+   not a line R1.3 could have added.
 3. **Layer markers.** `pytest.ini` gains `l1` / `l2` / `l4` / `l5`; the gate requires exactly
    one layer marker per test — **an unmarked test is red, not implicitly L1** — and
    `docs/test-design.md` §3's per-layer membership is derived from markers instead of written

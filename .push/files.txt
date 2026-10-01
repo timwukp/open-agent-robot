@@ -1,161 +1,56 @@
-# R1.2 — 猜拳那一對線。難的不是節點半段,是**格式**:兩端不能用同一個形狀,而兩邊都沒錯。
+# R1.3 的範圍界定。這個 PR 一條線都沒接,而它必須先落地,因為它裡面有一個**前置條件**:
+# 在那個 stage id 的閘接受 `R1.3b` 之前,`infra/dormant_seams.tsv` 沒有任何一列可以叫這個名字。
 #
-# `infra/graph_gaps.tsv` 把 `/game/rps_round` 與 `/memory/rps_table` 記成**一個**缺口的兩側,
-# 理由寫在那一列裡:只接一端看起來像進展,實際什麼都沒變 —— 沒有人落盤的表,沒有人還原得了。
-# 所以這個 PR 一次刪兩列,不然就不該存在。
+# 五個接縫被切成 2 / 3,而切開它們的是**生產者**不是大小:
+#   R1.3  = `memory/segment.py` + `salience.stamp()`  —— 輸入全部已經在線上
+#   R1.3b = `consolidate()` + `known_ids()` + `store.unlock_for_s5()` —— 它的輸入
+#           **在這棵樹裡沒有任何生產者**
 #
-# **誠實邊界,跟每一個 R1 的 PR 同一句:結構斷言證明線被宣告了,不證明訊息真的流過去。**
-# 訊息真的流過去屬於 L4,而 L4 需要安全群組開一個 `/32`。這一層能宣稱的是:兩個 topic 名字
-# 由 AST 對 `game/game_node.py` 自己的字面值釘住(改一邊過不了另一邊)、方法裡的語句順序、
-# QoS 的四個設定、以及回放出來的模型與活的表**逐位元相同**。
+# 四個發現各自有機制,不是印象:
+#   1. `/game/events_out` 有**四個**發佈者,其中一個是 `memory_node` 自己(`:136` 的 `pub_hud`),
+#      而四個裡有三個發同一個形狀 `{"hud": <str>}` 且**沒有生產者欄位**。唯一可用的判別式是
+#      「有沒有 `state` 鍵」—— 釘在四個生產者裡某一個的**偶然屬性**上。所以 `game_round`
+#      改從 `/game/rps_round` 來:一個發佈者、封閉 schema、R1.2 就已經訂閱了。
+#   2. `consolidate()` 的輸入沒有生產者。`observation()` 把候選封閉成
+#      `{kind, value, channel, episode}`,而 `SELF_REPORTED`/`USER_CONFIRMED` 只在**定義它們的
+#      那一個檔案**裡出現過。接它 = 先寫一個抽取器,而那件事最自然的實作是被否決的 LLM 判官。
+#   3. stage id 的閘錯了三件事,其中一件**拒絕一個已經推出去的階段**(`R1.1b`,PR #32)。
+#      另外兩件:失敗訊息指名一份它從來不讀的權威(`docs/plan.md`),以及那個形狀被寫了兩遍。
+#      第四個洞(**沒有東西注意到一個已經落地的階段**)這個 PR 不修,寫進 §6 item 2 當 R3 的事,
+#      並且誠實記下:這一輪的三列是**手改**的,漏一列六個閘全部還是綠的。
+#   4. `docs/plan.md` 自己對 R1.3 的大小講了兩次而且不一致(第 52 行 5 個、第 197 行 4 個),
+#      而沒有任何閘讀這兩個數字。
 #
-# ## 這一輪真正的發現:兩端的形狀不可調和,而 `Opponent.to_dict()` 不能落盤
-#
-# `game_node.on_rps_table` 呼叫 `Opponent.from_dict`,所以**線上**的 payload 必須是
-# `to_dict()`;而 `memory/recall.py::parse_rounds` 把磁碟檔的頂層**封閉成 `{"version","rounds"}`**,
-# 它自己寫下的理由是刪除:「`rounds` 是唯一一個 erasure 知道怎麼過濾的鍵」。
-# 兩者不可能是同一份文件,而衝突是實質的不是外觀的:`to_dict()` 的 `tables` 是**聚合量**,
-# 從清單裡拿掉一局不會讓計數減一 —— 所以把模型自己的形狀寫上磁碟,會讓一個行使被遺忘權的人的
-# **行為指紋活過每一次刪除**,而沒有任何閘看得見。
-#
-# `memory/rps_state.py` 只做這一件事:磁碟是可刪除的 rounds,線上的模型是**讀的時候導出來的**,
-# 只有一個推導方向(rounds → model),所以聚合量不可能跟它的來源漂開。而它成立的前提是
-# 已經修好的那件事:`Opponent.__post_init__` 用 `math.fsum` 而不是 `+=` 累加 log e-value,
-# 所以 N 次 `observe()` 建出來的表與從它自己的表重建的表**到最後一位都相同**。
-#
-# ## 三個「釘在寫下來的東西上」的檢查在這一輪壞掉,三個都是**導出來**修的
-#
-# 這是第四到第七個實例,而它們壞的方式各不相同 —— 最後一個是**兩個數字相等所以全綠**:
-#
-# (a) `tests/test_profile.py` 用「這個檔案裡恰好有**一個** `QoSProfile`」認出卡片的 QoS
-#     (`assert len(profiles) == 1`)。R1.2 合法地加了第二個(`TABLE_QOS`),測試轉紅。
-#     **而它比假紅更糟:它跟缺陷同意** —— 把兩個 latched 主題指向**同一個** profile 物件,
-#     計數就回到 1 而且是綠的,同時悄悄不再檢查卡片到底用哪一個發出去。
-#     改成**從發佈者那一側**導出 QoS 的名字,並加一個正控與一個具名突變體。
-#
-# (b) `tests/test_wiring_census.py` 的 `WRITER_IMPORTS` 是一個兩行常數(`profile` 與 `store`),
-#     bootstrap 突變體的 anchor 就釘在它上面。R1.2 合法地加了第三個 import(`rps_state`),
-#     anchor 移位,套件報的是**「mutant anchor 不見了」** —— harness 說它跑不了,
-#     不是守衛說樹乾淨。方向是對的,但那仍然是一個**停止突變的突變體**:
-#     一份名字清單不可能注意到一個新名字。現在從樹裡讀,而且突變體改成插在**最後一個**
-#     package import 之下(只要還有一個 import 在 bootstrap 上面,行程就死在它一直死的地方)。
-#
-# (c) `tests/test_architecture.py` 的 `GAP_MUTANTS["asymmetry_direction_flipped"]` 釘在
-#     `/memory/rps_table` 那一列上。這個 PR **正確地刪掉**那一列,於是突變體 `KeyError`
-#     而不是轉紅。一個釘在某一列上的突變體,是釘在那一列**繼續存在**上。重新錨到有列的那一側。
-#
-# (d) 第四個是驗證這一輪的時候自己掉出來的,而它跟前三個不同:**沒有任何東西轉紅,
-#     因為那兩個數字剛好相等。** `docs/test-design.md` §0 第一句寫「今天**真正跑起來**的是
-#     1669 個案例」,而 `infra/doc_counts.py` 那個閘讀的是 `pytest --collect-only`。
-#     整套跑完是 **1668 通過、1 個 skip**(`tests/test_meta.py` 要求 `oar-daemon`
-#     這個**行程**在跑,不只是二進位檔在)—— 收集數 1669、通過數 1668,
-#     而標籤寫的是後者、閘算的是前者。那條 skip 正是把兩個量分開的那個案例。
-#     改成「被收集到的是」,並且**兩個讀者一起改**:`infra/doc_counts.py` 的 pattern 與
-#     `tests/test_doc_counts.py` 的 `QUOTED` 是同一句話的兩個讀者,只改一邊會讓另一邊
-#     報「這句話不在文件裡了」。skip 數導不出來(這個閘從不執行套件),所以它跟秒數並列
-#     寫成讀數,不假裝是被守著的數字。
-#
-# ## 一個是結果、不是政策的副作用
-#
-# 兩列刪掉之後,`graph_gaps.tsv` 剩下的四列**全部是 `dead_end`**,所以 `orphan` 方向
-# (有訂閱者沒發佈者)現在是**空的**。這跟 `unused` 那一類的空**不是同一種空**:
-# `unused` 是 manifest header 自己**宣告**應該保持為空的類別,`orphan` 只是**恰好**沒有成員。
-# 沒有任何東西阻止下一個,而普查每一次都導出兩個方向,不把空的方向當成成就。
-#
-# ## schema 加第五個 kind,以及它為什麼帶 `existed`
-#
-# `memory/store.py` 的 `AUDIT_FIELDS` 加 `rps_restored`(`existed`、`orphans`、`rounds`)。
-# 三個計數加一個布林,**沒有 move、沒有 round**:一個人出什麼拳是 `rps_table.json` 的事,
-# 而那個檔案可以被刪,這條 stream 不行 —— 抄過來的一局會活過那次把它從唯一該持有它的檔案裡
-# 移除的刪除。`orphans` 是這一列存在的理由:R1.2 寫下去的每一局都帶 `episode: None`
-# (episode id 要等 R1.3),所以 `recall._run_rps` 全部映成 `ORPHAN`,
-# 而這筆記錄是那筆債**以數字現身**的地方,不是讓讀者事後自己重推的東西 —— 而且事後推不回來,
-# 一旦 R1.3 開始填那個欄位。`existed` 在 schema 裡而不只在 log 裡,是因為 `rounds: 0`
-# 有兩個成因(還沒有檔案 / 讀到了而它是空的),沒有這個旗標在磁碟上分辨不出來 ——
-# 這是 R1.1b 那個發現往上一層:一個有兩個成因的零需要那個把它們分開的旗標,
-# 而一個欄位只有一次是免費強制的,在第一個寫入者存在之前。**R1.2 就是那個寫入者。**
-#
-# ## 兩件比計畫寫的更弱、而弱的那句才是要守的
-#
-# `write_snapshot` 是**異步**的(入列就返回,`os.replace` 在寫者執行緒上),
-# 所以 `candidate` / `commit` 的切分買到的是**有界漂移**而不是持久性:模型最多領先磁碟一局,
-# 而發現異步失敗的那一局是被拒絕的那一局,因為 `Store._raise_if_failed` 在**下一次**呼叫進入時跑。
-# 邊界寫在 `rps_state.candidate` 的 docstring,由 `tests/test_rps_wiring.py` 釘住。
-# 另一件:`episode: None` 的誠實後果是「每一局都是 ORPHAN」,那是一張沒有歸屬的表**被設計成**
-# 的行為,不是這個模組發明的缺陷 —— 也正是 R1.3 排在下一個的理由。
-#
-# ## 休眠百分比這一輪自己推翻了自己
-#
-# `docs/design.md` 的 24.2% → 23.2%,而**分子一行都沒動**:六個休眠子系統一行未改,
-# 分母長了 1,687 行,其中 **810 行是一個測試檔**。四輪之內這個數字被更正了四次,
-# 而這一輪是最乾淨的反例。要引的數字是**接縫數 41**,不是百分比。
-#
-# ## 數字
-#
-# 離線套件 1669 個案例、其中 369 個突變體(R1.1b 的樹是 1622 / 351)。
-# `tests/test_rps_wiring.py` 是 36 個案例 / 12 個突變體;`test_profile.py` 58 → 60、
-# 16 → 17 個突變體;`test_audit_schema.py` 28 → 36、5 → 10 個突變體;
-# `test_meta.py` 50 → 51 —— **這個檔案一個字都沒改**:它對施加器普查,
-# 而新增一個帶突變體的測試檔就多一個參數化案例。
-# 整套跑完是 **1668 通過、1 個 skip**,rc 0 —— 1669 是**收集數**,見上面的 (d)。
-# 時間見 §3 與 pytest.ini,兩者這一輪都重新量過,n 與收尾的 load average 都寫在裡面。
-#
-# 逐位元推送慣例照舊:每個 blob 對 git hash-object 驗過,推完再逐位元讀回來比對。
-# infra/local.env 與 infra/ssh_config 帶帳號專屬值,永遠不進這個清單。
-# daemon/oar-daemon 與 daemon/miniaudio.h 是建置產物與 vendored 標頭,同樣不推。
-# .measure-r12.sh 是這一輪的量測腳本,scratch 檔,不是 repo 產物,也不在清單裡。
+# 這個 PR 不刪任何一列接縫 —— 普查仍然是 41 接縫 41 列。第 80 列(`memory/segment.py`)與
+# 第 101 列(`salience.stamp()`)是**下一個** PR 刪的,這一輪只是讓它們的階段名字為真。
 
-# --- 新模組:兩個形狀之間那一個不對稱,零 ROS(所以每個決定都在筆電上測得到)
-100644 memory/rps_state.py
-
-# --- 節點半段:訂 /game/rps_round、經單寫者落盤、latched 發 /memory/rps_table、
-#     表在但讀不了就不啟動
-100644 memory/memory_node.py
-
-# --- 第五個 kind:rps_restored(existed / orphans / rounds)
-100644 memory/store.py
-
-# --- 這一對線的測試:36 個案例、12 個突變體
-100644 tests/test_rps_wiring.py
-
-# --- 三個壞掉的「寫下來的東西」,三個都改成導出:
-#     QoS 從發佈者那一側導出(而舊的計數跟缺陷同意)、
-#     writer 的 package import 從樹裡讀、
-#     asymmetry 突變體重新錨到有列的那一側
-100644 tests/test_profile.py
+# 閘與它的形狀:一個生產者、一個引用者。
+100644 infra/wiring_census.py
 100644 tests/test_wiring_census.py
-100644 tests/test_architecture.py
 
-# --- (d):同一句話的兩個讀者一起改。§0 的標籤說「真正跑起來」,閘算的是收集數,
-#     而它們相等所以四輪都是綠的;整套跑完 1668 通過 / 1 skip 才把兩個量分開
-100644 infra/doc_counts.py
-100644 tests/test_doc_counts.py
+# 登錄冊:三列改成 R1.3b(手改的那三列)。
+100644 infra/dormant_seams.tsv
 
-# --- 普查族改成 sources= / resolve_names=,因為 `kind` 這個欄位名在同一個檔案裡有兩種詞彙,
-#     而它們共用字串 "audit":一個把兩者混同的普查會**同意**而不是失敗
-100644 tests/test_audit_schema.py
+# 計劃:manifest 的 5 拆成 2 + 3、R1.3 那一列重寫、新增 R1.3b 一列與它的排序理由、
+# §6 item 2 收下那兩個 membership 問題。
+100644 docs/plan.md
 
-# --- 缺口登錄冊少兩列,而 header 記下 orphan 方向現在是空的、那是結果不是政策
-100644 infra/graph_gaps.tsv
-
-# --- 圖:新模組一句話 + 重新生成的 SVG(節點、topic、邊都真的變了)
-100644 infra/arch_render.py
-100644 docs/architecture.svg
-
-# --- 文件:雙語同一個 PR,每一個數字兩邊相同。休眠百分比在 design.md 兩份裡都重新導出
+# 唯一權威跟著動:承諾 2 那一列現在指名是**生產者**把休眠那組切成兩半的。
 100644 docs/design.md
 100644 docs/design.zh-TW.md
-100644 docs/plan.md
+
+# 測試設計:§0 的收集數與 `tests/test_wiring_census.py` 那一列(42 → 44),
+# 加上 §3 兩個被閘住的分母。R1.2 那棵樹的讀數(1669 / 1668 / 1 skip)原地留著 ——
+# 每個數字跟著它自己的樹。
 100644 docs/test-design.md
+100644 tests/test_doc_counts.py
+
+# 案例數的另外三個讀者。
 100644 README.md
 100644 README.zh-TW.md
 100644 pytest.ini
 
-# --- 這一輪自己的推送紀錄。push_branch.py 這一輪一個字都沒動,但它必須在清單裡:
-#     tests/test_push_branch.py 守的不變量是「推送清單與推送器兩個都要在清單裡,
-#     否則這個機制在它產生的那棵樹裡不可審」—— 那是關於**被推出去的樹**的主張,
-#     不是關於這一輪的 diff 的。
-#     .push/message.txt 則刻意不在:它是 PR 的內文,住在 PR 上;把它也推進樹裡
-#     會讓同一段文字有兩個位置,而其中一個沒有任何讀者。
+# 推送清單自己與推送器 —— `tests/test_push_branch.py` 的不變量是關於**被推出去的那棵樹**
+# 可稽核,不是關於這一輪的 diff,所以 `push_branch.py` 這輪沒改也照樣列進來。
 100644 .push/files.txt
 100755 .push/push_branch.py

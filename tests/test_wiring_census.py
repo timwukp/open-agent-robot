@@ -48,6 +48,13 @@ import pytest
 
 from conftest import patch
 
+# Every other test here drives the census as a subprocess, which is deliberate: it is a
+# command with an exit code and that is the contract. This one import exists for a
+# different reason — `STAGE_RE` is a *format*, and a format needs exactly one creator.
+# The idiom is `tests/test_doc_counts.py`'s.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "infra"))
+import wiring_census  # noqa: E402
+
 CENSUS = "infra/wiring_census.py"
 MANIFEST = "infra/dormant_seams.tsv"
 STANDALONE = "infra/standalone_entrypoints.tsv"
@@ -702,16 +709,22 @@ def test_the_dormant_promises_each_have_a_named_stage(repo_root: Path) -> None:
     into a fact the suite maintains. When R1 finishes, these rows are gone and this
     test's set comprehension is empty — which is why it asserts a property of whatever
     rows exist rather than a fixed list of five.
-    """
-    import re
 
+    **The shape comes from `wiring_census.STAGE_RE` and is not re-spelled here.** It was
+    re-spelled, as a second inline `r"\\bR[0-9]+\\.[0-9]+\\b"`, and that made this file a
+    silent second reader of one format: R1.3 widened the shape to admit `R1.3b` (the
+    suffix `R1.1b` had already shipped under), and a copy would have kept refusing the
+    rows the census now accepts, or worse, kept accepting after a narrowing. Unlike
+    `tests/test_doc_counts.py`'s `QUOTED`, which is a mirror on purpose and says so, this
+    was a duplicate nothing declared — see `test_the_stage_id_shape_has_one_creator`.
+    """
     pending = {}
     for line in (repo_root / MANIFEST).read_text().splitlines():
         if line.strip().startswith("#") or not line.strip():
             continue
         seam, _asym, cls, reason = line.split("\t")
         if cls == "pending_stage":
-            pending[seam] = re.findall(r"\bR[0-9]+\.[0-9]+\b", reason)
+            pending[seam] = wiring_census.STAGE_RE.findall(reason)
 
     for seam, stages in pending.items():
         assert stages, f"{seam} is pending on no named stage"
@@ -722,4 +735,66 @@ def test_the_dormant_promises_each_have_a_named_stage(repo_root: Path) -> None:
     assert RECALL_SEAM in pending, (
         f"{RECALL_SEAM} has no pending_stage row. If R1.4 has landed, this assertion "
         f"and the manifest row are both stale and belong in that same PR"
+    )
+
+
+def test_the_stage_id_shape_has_one_creator(repo_root: Path) -> None:
+    """Nothing outside the census spells the stage-id shape.
+
+    The rule is the repo's own, applied twice before: `memory/profile.PREDICATES` and
+    `memory.salience.formula_id` each have exactly one creator, asserted rather than
+    assumed. This file broke it — line 714 held a second inline
+    `r"\\bR[0-9]+\\.[0-9]+\\b"` — and R1.3 is the round that could not survive it, because
+    widening the shape to admit `R1.3b` in one place and not the other gives a manifest
+    the gate accepts and the suite rejects, or the reverse, with no failure naming the
+    disagreement.
+
+    Scanned by *building* the shape rather than by containing it: a scan whose pattern is
+    the thing it looks for finds itself. This file is deliberately **not** excluded from
+    the scan — an exclusion is where the next copy would hide — which is why the prose
+    above escapes the backslash. A docstring that spells the shape with a single
+    backslash reds this test, and that is the intended behaviour, not a trap.
+    """
+    # Assembled from pieces so this line is not itself an occurrence. chr(92) is `\`.
+    needle = "R[0-9]" + "+" + chr(92) + ".[0-9]"
+    offenders = []
+    for path in sorted(repo_root.glob("**/*.py")):
+        if any(part in ("__pycache__", "venv", "venv-yue", "node_modules")
+               for part in path.parts):
+            continue
+        rel = path.relative_to(repo_root).as_posix()
+        if rel == CENSUS:
+            continue
+        if needle in path.read_text(encoding="utf-8"):
+            offenders.append(rel)
+    assert not offenders, (
+        f"{offenders} spell the stage-id shape, which lives once in {CENSUS} as "
+        f"STAGE_RE. A second speller is a second reader of one format, free to drift "
+        f"from the first in either direction"
+    )
+
+
+def test_the_stage_id_shape_admits_the_suffix_the_project_actually_uses(
+        repo_root: Path) -> None:
+    """`R1.1b` is a shipped stage, so the shape has to accept a suffixed id.
+
+    A positive control, and it is the pair to `_mut_pending_stage_without_a_stage_id`:
+    that mutant proves the gate refuses a reason with no stage, this proves it does not
+    refuse the naming convention the project uses. Before R1.3 the shape rejected
+    `R1.1b` and nothing noticed, because no row's reason had needed a suffix yet — the
+    gate and the plan disagreed for two rounds in the one direction a mutant pinned to
+    absence cannot see.
+    """
+    for good in ("R1.3 wires it", "R1.3b wires it", "R1.1b landed it", "R10.11c"):
+        assert wiring_census.STAGE_RE.search(good), f"{good!r} names a stage and was refused"
+    # Still strict: one suffix letter, not an arbitrary word glued to a number.
+    for bad in ("R1.3bx wires it", "R1 wires it", "R.3 wires it", "xR1.3"):
+        assert not wiring_census.STAGE_RE.search(bad), f"{bad!r} is not a stage id"
+    # And the rows that forced the widening really do use it, so a narrowing reds here
+    # as well as in the census — the widening is load-bearing, not anticipatory.
+    text = (repo_root / MANIFEST).read_text(encoding="utf-8")
+    assert "R1.3b" in text, (
+        "no manifest row names a suffixed stage, so this test is the only thing keeping "
+        "the suffix alive and the widening became speculative. If R1.3b has landed, its "
+        "rows are gone and this assertion belongs in that PR"
     )
