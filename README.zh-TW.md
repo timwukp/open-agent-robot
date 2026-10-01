@@ -154,7 +154,17 @@ max 0.1137 ms,也就是一個 20 ms 節拍週期的 **0.57%**,而且它在一條
 
 ## 設計記錄
 
-`docs/` 是這個 repo 最有價值的部分。它保留的是研究與論證,不只是結論 —— 包括那些**反直覺**的發現:
+**要問「設計是什麼」,只看這一份:**[`docs/design.md`](docs/design.md) 是它唯一的權威陳述 ——
+五個承諾各自真的接到哪一層、System 1 / System 2 的分工與逼出它的那個量測、
+不變量的封閉清單(每一條指名失去它時會紅的那個測試),以及這個專案刻意不蓋什麼。
+最後那一節把**被證偽**、**延後且有具名前置條件**、**未被評估**分開寫,
+因為一份把三者都寫成「我們不做 X」的文件,會告訴下一個讀者證據已經蓋棺,而事實上沒有。
+排程在 [`docs/plan.md`](docs/plan.md);測試契約在 [`docs/test-design.md`](docs/test-design.md)。
+哪份文件取代或部分推翻哪一份會記在 `docs/INDEX.md`,它在下一個 PR 落地([`docs/plan.md`](docs/plan.md) §3)。
+
+`docs/` 其餘的部分是**證據**,原文保留而不是被壓縮成結論 —— 包括那些**反直覺**的發現。
+讀某一輪是為了知道一個數字怎麼量出來的,不是為了知道現在的設計是什麼;
+其中有些建議後來已被推翻,而 `docs/design.md` §4.4 指名了那些**完全不得再被引用**的引用:
 
 - [`docs/day0-measurements.md`](docs/day0-measurements.md) —— 架構所依據的延遲數字
 - [`docs/research-multimodal-robot-agent-stack-2026-08-20.md`](docs/research-multimodal-robot-agent-stack-2026-08-20.md) —— 技術棧普查(ASR/TTS/視覺/仿真),附授權
