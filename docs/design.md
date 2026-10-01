@@ -59,22 +59,31 @@ own launch table instead of assuming it.
 | 2 | **It remembers you** | **The card is wired; the episodes are not.** *Corrected in R1.1b:* for the whole of R1.1 this row was true of the source and false of the running robot. `memory/memory_node.py` — the publisher of the card and the single writer — was launched as a file by `infra/run_ec2.sh`, so `sys.path[0]` was `memory/`, and there is no `memory` package inside `memory/`: `from memory import profile` raised `ModuleNotFoundError` from every working directory, before `rclpy.init()`, on every boot. The four other launched nodes each carry the `sys.path.insert` line and this one did not. So nothing was published, nothing was appended to `audit.jsonl`, and `run_ec2.sh status` showed a node that looked exactly like one nobody started. R1.1b adds the line and the gate that derives it. R1.1 subscribed `agent_node` to the latched `/memory/profile` and passes `card=` into `assemble()`, so a hand-written profile reaches the prompt of the running robot and a turn that beats the card leaves an audit record. Everything downstream of *writing* memory is still dormant: `memory/recall.py`, `memory/consolidate.py` and `memory/salience.py` execute no line at runtime and `memory/segment.py` is loaded by no node, so the robot remembers only what a human typed into `profile.json`. | For the wired half: `tests/test_profile_wiring.py`, and `/memory/profile` no longer has a row in `infra/graph_gaps.tsv`. For the dormant half: `assemble(recall=)` and `memory/segment.py` in `infra/dormant_seams.tsv`. Wired by R1.3 and R1.4 |
 | 3 | **You can tell it to forget** | **Recognised, not acted on.** `safety/guard.py:403 forget_request()` already recognises a deletion request in Chinese and English, and has no caller — so the robot can be asked to forget and will not. `memory/erase.py` is loaded by no node. | Two rows in `infra/dormant_seams.tsv`; `tests/test_guard.py:125` and `:543` cover the recogniser itself. Wired by R1.5 |
 | 4 | **It cannot be talked past its boundaries** | **Half wired, and the dormant half is the output side.** The input side is live: the constitution is loaded on every turn and the L0 stop reflex is deterministic. `safety/output_guard.py` — the side that inspects what the robot is about to *say* — is loaded by no node, and two functions in the live `safety/guard.py` have a second, weaker implementation inline in `agent_node` (see §3, defect D1). | `tests/test_guard.py` (which cites T-D1..T-D4) for the live half. For the dormant half the repo says so in its own data: `agent/tools.py`'s `EGRESS[SAY]` row carries `enforcement=NOT_WIRED`, and two `defect` rows sit in `infra/dormant_seams.tsv`. Wired by R1.6 |
-| 5 | **It actually plays against you** | **Wired but amnesiac.** `game/opponent.py` runs, and `game_node` publishes each resolved round to `/game/rps_round` — which no node subscribes to. The transition table therefore starts empty every boot, and the ledger's own arithmetic says the first ~120 rounds fall back to a 1/3 coin (81 order-2 contexts). | The paired rows `/game/rps_round` + `/memory/rps_table` in `infra/graph_gaps.tsv`, which the gate requires to be wired at both ends or neither. Wired by R1.2 |
+| 5 | **It actually plays against you** | **Wired, and no longer amnesiac — structurally.** *R1.2.* `memory_node` now sits on both ends: it subscribes `/game/rps_round`, persists each resolved round through the single writer, and republishes the replayed model latched on `/memory/rps_table`, which `game_node` has subscribed to since S2. Before it, the transition table started empty every boot and the ledger's own arithmetic put the first ~120 rounds on a 1/3 coin (81 order-2 contexts at `min_context_count = 3`). Two boundaries stay: the wire is *declared*, not observed carrying a message (L4), and every round R1.2 writes carries `episode: None`, so `recall` reports all of them as unattributed until R1.3 mints episode ids. | `memory/rps_state.py`; `tests/test_rps_wiring.py` (36 cases, 12 mutants), which asserts the disk↔wire asymmetry behaviourally rather than structurally because that module imports no ROS. Both `/game/rps_round` and `/memory/rps_table` rows are deleted from `infra/graph_gaps.tsv`, in one PR, which is what that manifest's paired-gap rule requires |
 
-**The honest summary is two sentences now, and that is the point of R1.1:** promise 1
-works, promise 2 reaches the prompt for the first time but only for facts a human typed,
-and promises 3–5 are built, tested offline, and not connected. The six dormant subsystems
-are **3,492 production lines plus 5,488 test lines = 8,980**, against **37,062** python
-lines in the tree on 2026-08-26, so **24.2%**.
+**The honest summary has moved for the second time in three rounds:** promise 1 works,
+promise 2 reaches the prompt but only for facts a human typed, promise 5 survives a
+restart for the first time, and promises 3 and 4 are built, tested offline, and not
+connected. The six dormant subsystems
+are **3,492 production lines plus 5,488 test lines = 8,980**, against **38,749** python
+lines in the tree on 2026-08-26 after R1.2, so **23.2%**.
 
 **The walk behind that denominator is written down here because the last two rounds' were
 not.** It is `find . -name '*.py' -not -path './.git/*' -not -path '*/__pycache__/*' |
 xargs wc -l`, which includes `tests/`, `.push/` and `web/`. Earlier rounds quoted 26.6%,
-25.8% and 25.3% without recording how the tree was counted, so this round could not
+25.8% and 25.3% without recording how the tree was counted, so R1.1b could not
 reproduce 35,507 to within 1,249 lines and **the movement from 25.3% to 24.2% must not be
 read as progress** — part of it is a different walk and part of it is 600 new lines of
 test. A number whose derivation is not written down cannot be compared to itself, which
 is §D item 4's rule applied one level deeper than it was written.
+
+**R1.2 moved it again, from 24.2% to 23.2%, and the numerator did not move at all.**
+The six dormant subsystems are byte-for-byte the same 8,980 lines; the denominator grew
+by **1,687** (`memory/rps_state.py` 248, `tests/test_rps_wiring.py` 810, and edits to
+`memory/memory_node.py`, `tests/test_audit_schema.py` and `tests/test_wiring_census.py`),
+of which **810 are one test file**. So this round wired a real subsystem *and* the figure
+would have fallen by roughly the same amount had it wired nothing — the same defect R1.1
+exhibited, now with the arithmetic on the page. Read the seam count instead.
 
 That percentage is the weakest number on this page and it is worth saying why. Its
 denominator is the whole tree, so **writing more tests anywhere makes the dormancy
@@ -188,6 +197,7 @@ preference, not an invariant, and may be traded away without a discussion here.
 | I6 | **No model judges a test.** Anything needing semantic judgement is reduced to a machine-checkable proxy or moved to human acceptance testing | `docs/test-design.md` §0 rule 1 | Structural: there is no judge to break. The evidence for the rule is in the README — judge-gated pipelines move the *measured* pass rate 0.72 → 0.94 while real correctness stays at 0.20 |
 | I7 | **Every assertion is paired with a named mutant it must kill**, and a mutant producing byte-identical output means the assertion measures the wrong quantity | `docs/test-design.md` §0 rule 2 | `tests/test_meta.py` (T-J7) — the word "every" is what T-J7 guards |
 | I8 | **The tool surface is closed and declarative, and discovery may only narrow it.** `agent/tools.py:179 REGISTRY` declares exactly one tool today — `read_skill_file`, local, read-only. `MAX_EFFECT_HOPS = 0`, so a tool declaring `MUTATES` **cannot be invoked at all**; raising that number is an edit to that file in a PR, not a config change. `reconcile()` treats a tool a server offers but the repo does not declare as a *finding*, never as a tool | `agent/tools.py`, written before any MCP client exists — the same reason `store.py`'s `why` was made mandatory before anything wrote to `events`: a boundary is free to draw exactly once | `tests/test_tools.py` (62 collected cases from 38 test functions — the count `infra/doc_counts.py` reconciles is the collected one): `set(REGISTRY) == {"read_skill_file"}`, no `MUTATES` spec is declared, `toolConfig`'s tool order is derived from `REGISTRY`, and the `EGRESS` rows are checked for internal consistency. `toolConfig` is attached only on turns where a skill fired, so most turns carry no tool schema at all |
+| I9 | **A behavioural aggregate is derived on read, never persisted.** *(R1.2.)* What goes on disk is the list of individual rounds; the opponent model is rebuilt from them at boot and published on the wire, so there is exactly one direction of derivation — rounds → model. The reason is the deletion, and it is arithmetic rather than a preference: `Opponent.to_dict()`'s `tables` are counts, and removing a round from a list does not decrement a count. A model persisted in its own shape would therefore keep the behavioural fingerprint of a person who exercised the right to be forgotten, and no gate would notice, because `rounds` is the only key an erasure knows how to filter | `memory/rps_state.py` — the asymmetry is the module's entire content, and `snapshot()` re-validates every file it writes through `recall.parse_rounds`, the reader a deletion depends on, so a shape recall refuses cannot reach the disk. `recall.parse_rounds` closes the top level to `{"version", "rounds"}` for the same reason | `tests/test_rps_wiring.py`: that the two formats are genuinely incompatible in *both* directions (so the premise cannot be simplified away), that a model replayed from the rounds equals the live one to the last bit — which holds only because `Opponent.__post_init__` sums with `math.fsum` — and one named mutant that persists the wire form and is refused |
 
 ### D1 — the one invariant with a known defect, named rather than smoothed over
 
@@ -441,15 +451,17 @@ Four mechanisms, all four in force as of this PR:
    an item between §4.1, §4.2 and §4.3, the move *is* the edit — not a rewrite that
    erases which state it used to be in.
 4. **Numbers whose derivation is not automated carry their date and their
-   denominator.** §1's 24.2%, §5's line counts and §2's latency figures each say what
+   denominator.** §1's 23.2%, §5's line counts and §2's latency figures each say what
    they were measured against and when, because the alternative — a bare percentage — is
    the form in which a stale number survives longest. Where this file corrects an
-   earlier claim (§1's 26.6%, then its 25.8%, then its 25.3%, §5's "932 lines", §6's
+   earlier claim (§1's 26.6%, then its 25.8%, then its 25.3%, then its 24.2%, §5's
+   "932 lines", §6's
    Guardrails entry), the correction says what the old number was — and R1.1 found the
    sharper version of this rule: three of those four readings recorded no **walk**, so
    the fourth could not be compared to them at all, and §1 now writes the `find`
    invocation down. §1's percentage has now been
-   corrected three times in three rounds, which is the argument for quoting the seam count
+   corrected four times in four rounds, and R1.2's correction is the cleanest evidence
+   against the number itself: the numerator did not move by a single line, which is the argument for quoting the seam count
    instead: the count moves when a seam moves, and the percentage moves when anyone
    adds a test anywhere. A correction that hides the thing it replaced asks the
    next reader to trust it, and this file's whole argument is that trust is not the

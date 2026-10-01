@@ -86,10 +86,11 @@ PRODUCERS = ("memory/store.py", "memory/memory_node.py", "memory/erase.py",
 
 # Floor on the census. A walk that resolves zero call sites reports clean, and clean is
 # the same output as "every site is fine" — so the count is asserted, not just the
-# findings. Three is what is on disk today; the assertion is `>=`, because a new
+# findings. Five is what is on disk today; the assertion is `>=`, because a new
 # producer must raise this number and never lower it silently. R1.1 raised it from 3 by
-# adding `memory_node.on_audit`.
-MIN_CENSUS_SITES = 4
+# adding `memory_node.on_audit`; R1.2 raised it from 4 by adding the `rps_restored`
+# append in `MemoryNode.__init__`.
+MIN_CENSUS_SITES = 5
 
 # The sites the census resolves but cannot read, each with the test that covers it
 # instead. This table is the reason the census is not allowed to just skip them.
@@ -207,16 +208,141 @@ def read_audit(store) -> list[dict]:
 
 
 # ============================================ the two sides of the gate must agree
+# Call sites in PRODUCERS that pass a `kind=` belonging to a DIFFERENT closed vocabulary,
+# each named with the type that owns it. Data rather than a skip, for the reason the whole
+# file is built on: a walk taught to ignore a shape has a hole shaped like that shape, and
+# the next `kind=` on the audit path would land in it.
+#
+# There is only one such type today and it is worth naming precisely, because the
+# collision is not hypothetical. `safety/output_guard.py` holds BOTH vocabularies:
+# `Action.kind` is one of `interrupt` / `audit` (what the caller must *do* with a span),
+# while an audit record's `kind` selects an `AUDIT_FIELDS` row (what a record *is*). They
+# share the field name **and they share the value `"audit"`**, in one file, which is why a
+# census that conflated them could not be made to fail on the overlap — it would agree,
+# for the wrong reason, on the one kind that appears in both.
+FOREIGN_KIND_SITES = {
+    ("safety/output_guard.py", "Action"): (
+        "Action.kind is the action vocabulary (INTERRUPT / AUDIT) consumed by "
+        "gateway/ws_gateway.py, not an audit record kind; the record itself is built one "
+        "line later by guard.audit_record, which stamps kind='audit' in guard.py"),
+}
+
+
+def producer_sources() -> dict[str, str]:
+    """Each producer's source, read from disk. The one place these files are read."""
+    return {rel: (REPO_ROOT / rel).read_text(encoding="utf-8") for rel in PRODUCERS}
+
+
+def produced_kinds(sources: dict[str, str] | None = None, *, resolve_names: bool = True
+                   ) -> tuple[dict[str, list[tuple[str, int]]], list[tuple]]:
+    """Every audit `kind` a producer stamps, plus every `kind=` from another vocabulary.
+
+    An audit record is a **dict** — `check_audit` takes one — so a dict literal with a
+    `"kind"` key is the shape that reaches the stream, and that is what the first return
+    value collects. Both shapes resolve a string constant **or a module-level name**:
+    `memory/erase.py` writes `{"kind": TOMBSTONE_KIND, ...}`, so a walk that only read
+    constants would report the deletion receipt as unproduced and pass — the wrong
+    direction for a census to fail in. Constants come from the same file's own top-level
+    assignments.
+
+    The second return value is every `kind=` keyword argument, because those are the sites
+    that might be audit records built by a helper and might be something else entirely.
+    The caller checks each one against `FOREIGN_KIND_SITES` rather than dropping it.
+
+    Not `grep '"kind"'`: a docstring or a comment quoting a record is not a producer, and
+    the difference between a kind that is written and a kind that is *described* is the
+    entire content of this gate.
+
+    `sources` and `resolve_names` exist for the mutants below and default to the real
+    thing. A census is a claim about what it *would* find, and the only way to check that
+    claim is to hand it a tree where the answer is known — so the walk takes its input
+    rather than reaching for the disk itself, and its one interesting internal decision
+    (resolving a module-level name, not only a literal) can be turned off and shown to
+    matter. Without the switch, "the walk reads `TOMBSTONE_KIND`" is untested prose.
+    """
+    sources = producer_sources() if sources is None else sources
+    out: dict[str, list[tuple[str, int]]] = {}
+    foreign: list[tuple] = []
+    for rel, src in sources.items():
+        tree = ast.parse(src)
+        consts = {t.id: n.value.value
+                  for n in tree.body if isinstance(n, ast.Assign)
+                  and isinstance(n.value, ast.Constant)
+                  and isinstance(n.value.value, str)
+                  for t in n.targets if isinstance(t, ast.Name)}
+
+        def resolve(node, consts=consts):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return node.value
+            if isinstance(node, ast.Name) and resolve_names:
+                return consts.get(node.id)
+            return None
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Dict):
+                for k, v in zip(node.keys, node.values):
+                    if isinstance(k, ast.Constant) and k.value == "kind":
+                        kind = resolve(v)
+                        if kind is not None:
+                            out.setdefault(kind, []).append((rel, node.lineno))
+            elif isinstance(node, ast.Call):
+                for kw in node.keywords:
+                    if kw.arg == "kind":
+                        foreign.append((rel, node.lineno, ast.unparse(node.func),
+                                        resolve(kw.value)))
+    return out, foreign
+
+
+def test_every_kind_keyword_site_is_classified() -> None:
+    """A `kind=` in a producer is either an audit record or named as something else.
+
+    This is the check that stops `produced_kinds` from being a walk with a convenient
+    blind spot. It is also the one that found the collision `FOREIGN_KIND_SITES`
+    describes: `Action(kind=AUDIT)` resolves to the string `"audit"`, so conflating the
+    two vocabularies produces agreement rather than a failure.
+    """
+    _, foreign = produced_kinds()
+    assert foreign, ("no `kind=` keyword site found in any producer — this check is "
+                     "measuring nothing, or Action moved and FOREIGN_KIND_SITES is dead")
+    unclassified = [f for f in foreign if (f[0], f[2]) not in FOREIGN_KIND_SITES]
+    assert not unclassified, (
+        f"`kind=` site(s) in a producer belong to no named vocabulary: {unclassified}. "
+        "If it is an audit record, build it as a dict so check_audit's declaration "
+        "covers it; if it is not, add it to FOREIGN_KIND_SITES with the type that owns it")
+    stale = sorted(set(FOREIGN_KIND_SITES) - {(f[0], f[2]) for f in foreign})
+    assert not stale, f"FOREIGN_KIND_SITES names site(s) that are gone: {stale}"
+
+
 def test_every_declared_kind_has_a_named_producer_and_no_field_is_declared_twice()\
         -> None:
     """The declaration is documentation until something derives it.
 
-    Two directions. Every kind names a producer (a row nobody writes is a field set
-    that can only be wrong), and no kind redeclares one of the store's own fields —
-    a row listing `why` or `ts` would be a second reader of a decision `WHY_REQUIRED`
-    and the writer already own, free to drift from the first.
+    Three directions now. Every kind names a producer (a row nobody writes is a field set
+    that can only be wrong) — **derived** from the producers' own ASTs; every kind a
+    producer stamps is declared, because `check_audit` refuses an undeclared kind and the
+    refusal would be a runtime discovery; and no kind redeclares one of the store's own
+    fields, since a row listing `why` or `ts` would be a second reader of a decision
+    `WHY_REQUIRED` and the writer already own, free to drift from the first.
+
+    **The first direction used to be a written-down set** — `{"audit", "chat",
+    "profile_loaded", "tombstone"}` — under a docstring claiming the kinds were derived. A
+    name list cannot notice a new name, so what it actually enforced was "nobody added a
+    row", and it enforced that by going red on the round that added one. The kind added
+    two rounds earlier had never been checked against a producer at all: `chat` was in the
+    list because someone typed it there, not because `agent_node` writes it.
     """
-    assert set(st.AUDIT_FIELDS) == {"audit", "chat", "profile_loaded", "tombstone"}
+    produced, _ = produced_kinds()
+    assert len(produced) >= 5, (
+        f"the walk resolved only {sorted(produced)} — under the five kinds on disk, and "
+        "a census that resolves nothing agrees with every declaration for free")
+    undeclared = sorted(set(produced) - set(st.AUDIT_FIELDS))
+    assert not undeclared, (
+        f"producer(s) stamp undeclared kind(s) {undeclared} at "
+        f"{[produced[k] for k in undeclared]} — check_audit refuses these at runtime")
+    unproduced = sorted(set(st.AUDIT_FIELDS) - set(produced))
+    assert not unproduced, (
+        f"AUDIT_FIELDS declares {unproduced} and no producer in PRODUCERS stamps it: a "
+        "field set nothing writes is a field set that can only be wrong")
     for kind, fields in st.AUDIT_FIELDS.items():
         assert fields, f"{kind!r} declares no fields at all"
         assert list(fields) == sorted(fields), f"{kind!r} is not sorted: {fields}"
@@ -355,10 +481,18 @@ def test_the_profile_loaded_literal_in_memory_node_carries_only_declared_fields(
 
 
 # ============================================================ the refusals, per kind
-@pytest.mark.parametrize("kind", ["audit", "profile_loaded", "tombstone"])
+@pytest.mark.parametrize("kind", sorted(st.AUDIT_FIELDS))
 def test_an_undeclared_field_is_refused_for_every_kind(tmp_path: Path,
                                                        kind: str) -> None:
-    """Parametrised over `AUDIT_FIELDS` itself, so a kind cannot be added untested."""
+    """Parametrised over `AUDIT_FIELDS` itself, so a kind cannot be added untested.
+
+    That sentence was in this docstring for three rounds while the list beside it was
+    written out by hand — `["audit", "profile_loaded", "tombstone"]` — which is to say the
+    docstring described the gate someone meant to build. It was already wrong when it was
+    written: `chat` had been declared and was never in the list, so the one kind added
+    since this test's own claim was the one kind it did not cover. Now it is derived, and
+    a new row in `AUDIT_FIELDS` adds a case here whether or not anyone remembers to.
+    """
     record = {"kind": kind, "utterance": "來揮手", "why": WHY}
     with pytest.raises(st.StoreError, match="undeclared field"):
         st.check_audit(record)
@@ -712,3 +846,102 @@ def test_mutant_audit_check_moved_after_seq_dents_the_log(tmp_path: Path) -> Non
     assert seqs == [1, 3], (
         f"the mutant left no gap ({seqs}), so the placement assertion is measuring "
         "nothing — the real module's [1, 2] would be indistinguishable")
+
+
+# ============================================ mutants of the census, not of the module
+# The five above patch `memory/store.py` and ask whether `check_audit` still refuses.
+# These four patch what the *census* reads and ask whether the census still notices —
+# a distinct question, because a walk that resolves nothing agrees with every
+# declaration for free, and the two derivations added in R1.2 replaced hand-written
+# name lists whose failure mode was exactly that silence.
+
+@pytest.mark.mutation
+def test_no_mutant_control_the_census_reads_the_tree_on_disk() -> None:
+    """§6.0 rule 2 for the census: unmutated, it resolves the five kinds and one foreign
+    site that are on disk. Every mutant below is a difference against these numbers, so a
+    walk that had stopped reading anything would 'kill' all four while proving nothing."""
+    produced, foreign = produced_kinds()
+    assert sorted(produced) == sorted(st.AUDIT_FIELDS)
+    # Sites, then distinct (file, type) pairs. `Action(kind=...)` is constructed more than
+    # once, and the count is asserted separately from the classification so that a site
+    # appearing or disappearing is not absorbed into a set comparison.
+    assert len(foreign) == 2, f"the foreign-site count moved: {foreign}"
+    assert sorted({(f[0], f[2]) for f in foreign}) == sorted(FOREIGN_KIND_SITES)
+    assert sorted({f[3] for f in foreign}) == ["audit", "interrupt"], (
+        "the two Action kinds no longer resolve to both strings, and 'audit' is the one "
+        "that collides with a record kind — the overlap this table exists to name")
+
+
+@pytest.mark.mutation
+def test_mutant_census_resolves_only_literals_and_loses_the_deletion_receipt() -> None:
+    """MUTANT: `resolve` stops following a module-level name.
+
+    `memory/erase.py` writes `{"kind": TOMBSTONE_KIND, ...}`. A walk that reads only
+    string literals reports `tombstone` as **unproduced** — and the direction matters: it
+    would fail loudly here, but the same blindness applied to the *undeclared* direction
+    is silent, because a kind the walk cannot see is a kind it cannot object to.
+    """
+    literal_only, _ = produced_kinds(resolve_names=False)
+    lost = sorted(set(st.AUDIT_FIELDS) - set(literal_only))
+    assert lost == ["tombstone"], (
+        f"the name-resolving branch no longer changes the answer (lost {lost}) — either "
+        "erase.py now writes the string inline, in which case resolve_names is dead "
+        "weight, or the walk is not reading what this mutant claims")
+
+
+@pytest.mark.mutation
+def test_mutant_a_producer_stamps_an_undeclared_kind_and_the_census_says_so() -> None:
+    """MUTANT: a producer grows a record kind nobody declared.
+
+    The direction the old hand-written set could not fail in: `{"audit", "chat",
+    "profile_loaded", "tombstone"}` was a claim about the declaration, not about the code,
+    so a producer inventing a kind was a runtime `check_audit` refusal and nothing earlier.
+    """
+    sources = producer_sources()
+    rel = "memory/memory_node.py"
+    sources[rel] = sources[rel] + (
+        '\n\ndef _mutant(store):\n'
+        '    store.append("audit", {"kind": "rps_forgotten", "rounds": 0})\n')
+    produced, _ = produced_kinds(sources)
+    assert "rps_forgotten" in produced, "the census does not see a new dict-literal kind"
+    assert sorted(set(produced) - set(st.AUDIT_FIELDS)) == ["rps_forgotten"], \
+        "the undeclared direction does not report it"
+    assert produced["rps_forgotten"][0][0] == rel, "the finding names the wrong file"
+
+
+@pytest.mark.mutation
+def test_mutant_a_declared_row_loses_its_producer_and_the_census_says_so() -> None:
+    """MUTANT: the `rps_restored` record leaves `memory_node.py`.
+
+    A row nothing writes can only be wrong, and it is the failure a name list *hides*
+    rather than reports — the list would still contain the kind, because the list was
+    never about the producers.
+    """
+    sources = producer_sources()
+    rel = "memory/memory_node.py"
+    assert '"kind": "rps_restored",' in sources[rel], "mutant anchor gone"
+    sources[rel] = sources[rel].replace('"kind": "rps_restored",',
+                                        '"kind": None,', 1)
+    produced, _ = produced_kinds(sources)
+    assert sorted(set(st.AUDIT_FIELDS) - set(produced)) == ["rps_restored"], \
+        "the unproduced direction does not notice a row losing its only producer"
+
+
+@pytest.mark.mutation
+def test_mutant_an_unclassified_kind_keyword_site_appears_in_a_producer() -> None:
+    """MUTANT: a second `kind=` vocabulary arrives with no name.
+
+    This is the hole `FOREIGN_KIND_SITES` exists to keep closed. A walk that simply
+    ignored `kind=` kwargs would pass this mutant in silence, and the value chosen here is
+    `"audit"` on purpose: it is the string both vocabularies already share, so a census
+    that conflated them would *agree* rather than fail.
+    """
+    sources = producer_sources()
+    rel = "safety/guard.py"
+    sources[rel] = sources[rel] + (
+        '\n\ndef _mutant():\n    return Verdict(kind="audit", why="x")\n')
+    _, foreign = produced_kinds(sources)
+    unclassified = [f for f in foreign if (f[0], f[2]) not in FOREIGN_KIND_SITES]
+    assert [(f[0], f[2], f[3]) for f in unclassified] == [(rel, "Verdict", "audit")], (
+        "an unnamed kind= site in a producer is not reported, so the walk has a hole "
+        "shaped like every helper that builds a record for someone else")

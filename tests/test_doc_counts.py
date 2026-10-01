@@ -153,7 +153,11 @@ SUITE, MUTANTS = "suite", "mutants"
 TOOLS_CASES, TOOLS_FUNCS, STORE_MUTANTS = "tools_cases", "tools_funcs", "store_mutants"
 SEAM_ROWS = "seam_rows"
 QUOTED = [
-    ("docs/test-design.md", "今天真正跑起來的是 {} 個案例", SUITE, "suite total"),
+    # R1.2 reworded this one from "真正跑起來的是" to "被收集到的是": the gate computes
+    # `--collect-only`, and the verification run was 1668 passed plus one host-conditional
+    # skip. Both readers of the sentence had to move together, which is the whole reason this
+    # list is a mirror of `doc_counts.checks` and not a second source of truth.
+    ("docs/test-design.md", "今天被收集到的是 {} 個案例", SUITE, "suite total"),
     ("docs/test-design.md", "全套 {} 個案例", MUTANTS, "mutation total"),
     ("docs/test-design.md", "選到 **{} 個案例**", MUTANTS, "mutation total (T-J4)"),
     ("README.md", "Offline suite, {} cases", SUITE, "suite total"),

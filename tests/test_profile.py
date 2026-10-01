@@ -522,6 +522,66 @@ def test_the_node_uses_the_one_calibration() -> None:
     assert float(_assigned(MEMORY_NODE_PY, "PROXY_RATIO")) == _skills_proxy_ratio()
 
 
+def _publisher_qos_names(src: str) -> dict[str, str]:
+    """topic string → the name of the QoS argument its `create_publisher` is handed.
+
+    Takes source text rather than a path so a mutant can be checked without writing a
+    file, the same reason `ros_census.edges_in` does.
+    """
+    tree = ast.parse(src)
+    consts = {t.id: n.value.value
+              for n in ast.walk(tree) if isinstance(n, ast.Assign)
+              for t in n.targets
+              if isinstance(t, ast.Name) and isinstance(n.value, ast.Constant)}
+    names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "create_publisher" and len(node.args) >= 3
+                and isinstance(node.args[1], ast.Name)
+                and isinstance(node.args[2], ast.Name)):
+            topic = consts.get(node.args[1].id)
+            if topic is not None:
+                names[topic] = node.args[2].id
+    return names
+
+
+def _publisher_qos(path: Path, topic_name: str) -> dict[str, ast.expr]:
+    """The keyword *nodes* of the `QoSProfile(...)` the publisher for `topic_name` is handed.
+
+    **Derived through the publisher, because the count broke.** The first version read
+    *every* `QoSProfile` call in the file and asserted there was exactly one. That held
+    for two rounds and then R1.2 added `TABLE_QOS` — a legitimate second profile, for a
+    second latched topic — and this test went red for a reason it was never about
+    (`expected one QoSProfile, found 2`). A count is pinned to the file not growing, and
+    the cheapest way past that red is `profiles[0]`, which silently stops checking which
+    of the two the card is published with.
+
+    So the walk goes the other way: find `create_publisher(..., <TOPIC const>, <name>)`,
+    resolve `<TOPIC const>` through the module's own assignment, then read the
+    `QoSProfile(...)` assigned to `<name>`. Swapping the publisher onto a volatile
+    profile now moves this test, and adding a third topic does not.
+    """
+    src = path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    qos_name = _publisher_qos_names(src).get(topic_name)
+    assert qos_name, (f"no create_publisher for {topic_name} in {path.name} with a named "
+                      "QoS argument — the publisher this test measures has moved")
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == qos_name for t in node.targets)):
+            assert (isinstance(node.value, ast.Call)
+                    and getattr(node.value.func, "id", None) == "QoSProfile"), (
+                f"{qos_name} is not its own QoSProfile(...) call — an alias makes two "
+                "topics share one policy object, which is one decision wearing two names")
+            return {k.arg: k.value for k in node.value.keywords}
+    raise AssertionError(f"{qos_name} is not assigned at module level in {path.name}")
+
+
+def _qos_dump(path: Path, topic_name: str) -> dict[str, str]:
+    """`_publisher_qos` with each value rendered, for the enum-membership assertions."""
+    return {arg: ast.dump(node) for arg, node in _publisher_qos(path, topic_name).items()}
+
+
 def test_the_card_is_published_transient_local_with_depth_one() -> None:
     """Static, and honestly so: whether a late joiner actually receives the sample is
     an rclpy behaviour and belongs to layer L4 on the instance. What CI can hold is
@@ -529,15 +589,36 @@ def test_the_card_is_published_transient_local_with_depth_one() -> None:
     default VOLATILE durability is the silent version of this defect, and it looks
     exactly like every other publisher in the repo.
     """
-    tree = ast.parse(MEMORY_NODE_PY.read_text())
-    profiles = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
-                and getattr(n.func, "id", None) == "QoSProfile"]
-    assert len(profiles) == 1, f"expected one QoSProfile, found {len(profiles)}"
-    kw = {k.arg: ast.dump(k.value) for k in profiles[0].keywords}
-    assert "TRANSIENT_LOCAL" in kw.get("durability", ""), kw
-    assert "RELIABLE" in kw.get("reliability", ""), kw
-    assert ast.literal_eval(
-        [k.value for k in profiles[0].keywords if k.arg == "depth"][0]) == 1
+    kw = _publisher_qos(MEMORY_NODE_PY, pf_topic_name())
+    dumped = {arg: ast.dump(node) for arg, node in kw.items()}
+    assert "TRANSIENT_LOCAL" in dumped.get("durability", ""), dumped
+    assert "RELIABLE" in dumped.get("reliability", ""), dumped
+    assert ast.literal_eval(kw["depth"]) == 1
+
+
+def test_the_second_latched_topic_did_not_quietly_reuse_the_card_policy() -> None:
+    """The positive control for the helper above, and a claim of its own.
+
+    R1.2's `/memory/rps_table` is the second latched topic in this file. Two things
+    could have gone wrong and only one of them is about the card: the table could have
+    been published `VOLATILE` (its own test, in `tests/test_rps_wiring.py`), or the two
+    publishers could have been handed the *same* object, at which case a later change to
+    one topic's durability silently changes the other's. So this asserts the two
+    publishers name two different profiles, and that both ask for durability — which is
+    also what proves the helper above is reading the publisher and not just the first
+    `QoSProfile` in the file.
+    """
+    card = pf_topic_name()
+    table = _assigned(MEMORY_NODE_PY, "RPS_TABLE_TOPIC")
+    assert card != table
+    names = _publisher_qos_names(MEMORY_NODE_PY.read_text(encoding="utf-8"))
+    assert names.get(card) and names.get(table), names
+    assert names[card] != names[table], (
+        f"both latched topics are published with {names[card]}: one object, two topics, "
+        "so the next durability change moves a topic nobody was editing")
+    for topic in (card, table):
+        assert "TRANSIENT_LOCAL" in _qos_dump(MEMORY_NODE_PY, topic).get(
+            "durability", ""), topic
 
 
 def test_the_node_starts_no_timer_that_would_hide_a_volatile_subscriber() -> None:
@@ -862,6 +943,37 @@ def test_a_second_publisher_of_the_card_is_not_read_as_a_subscriber() -> None:
     assert kinds(mutant) == {"pub"}, (
         "the census reports a create_publisher call as something other than a publisher, "
         "so `topic.pub == ['memory']` cannot notice a second card producer")
+
+
+@pytest.mark.mutation
+def test_the_two_latched_publishers_sharing_one_profile_object_is_caught() -> None:
+    """The mutant the `len(profiles) == 1` version could not have had.
+
+    That version asserted the file contained exactly one `QoSProfile`, so the way to
+    make it pass with two latched topics was to give them **one** profile object — the
+    mutation below — and the count would then have been 1 and green. The count agreed
+    with the defect. Reading the QoS name *through the publisher* is what makes the two
+    cases distinguishable, so this is the assertion that pays for the rewrite.
+
+    Applied to source text, like the census mutant above: nothing on disk moves, and the
+    control half re-reads the shipped source in the same call.
+    """
+    src = MEMORY_NODE_PY.read_text(encoding="utf-8")
+    card, table = pf_topic_name(), _assigned(MEMORY_NODE_PY, "RPS_TABLE_TOPIC")
+    anchor = "RPS_TABLE_TOPIC, TABLE_QOS)"
+    assert anchor in src, f"mutant anchor no longer in {MEMORY_NODE_PY.name}: {anchor!r}"
+
+    shipped = _publisher_qos_names(src)
+    assert shipped[card] != shipped[table], "the shipped tree already shares one profile"
+
+    mutant = _publisher_qos_names(src.replace(anchor, "RPS_TABLE_TOPIC, PROFILE_QOS)", 1))
+    assert mutant[card] == mutant[table] == shipped[card], mutant
+    # And the count the old version read is *unchanged* by the mutation in the direction
+    # that matters: patch out the now-unused TABLE_QOS assignment and the file is back to
+    # one QoSProfile call, which the old assertion would have called correct.
+    trimmed = src.replace(anchor, "RPS_TABLE_TOPIC, PROFILE_QOS)", 1)
+    trimmed = trimmed[:trimmed.index("TABLE_QOS = QoSProfile(")] + "TABLE_QOS = None\n"
+    assert trimmed.count("QoSProfile(") == 1, trimmed.count("QoSProfile(")
 
 
 def test_the_store_module_is_unpolluted_after_the_mutants() -> None:

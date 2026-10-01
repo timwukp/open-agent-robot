@@ -608,8 +608,17 @@ GAP_MUTANTS = {
         "reason": "a stale excuse that would cover the next topic of this name silently"}},
     "class_outside_the_closed_set": lambda g: {**g, "/speech/tts_done": {
         **g["/speech/tts_done"], "class": "wontfix"}},
-    "asymmetry_direction_flipped": lambda g: {**g, "/memory/rps_table": {
-        **g["/memory/rps_table"], "asymmetry": "dead_end"}},
+    # Re-anchored in R1.2, and the reason it had to move is the finding. It used to flip
+    # `/memory/rps_table` from `orphan` to `dead_end`; R1.2 wired that pair and deleted
+    # both rows, which left the manifest with **no `orphan` row at all** — so a mutant
+    # anchored to that class could no longer be built, and this test raised KeyError
+    # instead of going red on the census. The direction is flipped the other way now
+    # (`dead_end` claimed for a topic that has a subscriber and no publisher), which is
+    # the same assertion from the side that has rows. That the `orphan` class is empty is
+    # a result and not a policy — see `infra/graph_gaps.tsv`'s header, which distinguishes
+    # the two — and a mutant is not the place to record it.
+    "asymmetry_direction_flipped": lambda g: {**g, "/joint_states": {
+        **g["/joint_states"], "asymmetry": "orphan"}},
     "reason_reduced_to_a_shrug": lambda g: {**g, "/joint_states": {
         **g["/joint_states"], "reason": "known issue"}},
 }
