@@ -39,6 +39,8 @@ instead of logging about it.
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
 import rclpy
 from rclpy.logging import get_logger
@@ -47,8 +49,21 @@ from rclpy.qos import (DurabilityPolicy, HistoryPolicy, QoSProfile,
                        ReliabilityPolicy)
 from std_msgs.msg import String
 
-from memory import profile as pf
-from memory import store as st
+# run_ec2.sh launches this file directly, so sys.path[0] is memory/, not the repo root.
+# Without this line `from memory import profile` raises ModuleNotFoundError — there is no
+# `memory` package *inside* memory/ — so the single writer died before `rclpy.init()` on
+# every boot, from any working directory, and nothing offline could see it: the four other
+# launched nodes that need this had it and this one did not.
+#
+# It is not a missing nicety. It is why the seams the census reports as `wired` through
+# this file were not reachable in the running robot at all, which is a stronger statement
+# than any row in infra/dormant_seams.tsv makes. `infra/wiring_census.py` now derives this
+# requirement from the launch table instead of assuming it — see `bootstrap_findings`,
+# whose existence is the only reason a second missing bootstrap would be noticed.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from memory import profile as pf  # noqa: E402
+from memory import store as st  # noqa: E402
 
 TOPIC = "/memory/profile"
 HUD_TOPIC = "/game/events_out"
