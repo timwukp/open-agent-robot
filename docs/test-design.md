@@ -6,7 +6,7 @@
 
 閱讀順序:先讀 §0(為什麼這樣分級),再跳到你要動的那個子系統。
 
-**這份文件描述的是設計,不是既成事實。** 今天真正跑起來的是 1474 個案例,落在
+**這份文件描述的是設計,不是既成事實。** 今天真正跑起來的是 1512 個案例,落在
 §2.A(持久化與單寫者,含 T-A5 唯讀種子與 T-A9 配對律)、
 §2.B 的 T-B1/T-B2/T-B4 與 T-B3 的不變量半段(確定性切分)、
 §2.C 的 T-C1 的 goal 半段(`why.goal` 封閉枚舉)、上一輪的 T-C2(N ≥ 2 個獨立 episode)與 T-C3(provenance 完整性)、
@@ -16,7 +16,8 @@
 上一輪的 §2.F 的 T-F6 的三組對照本身(三支臂 + 拒絕下結論的退出碼)、
 **這一輪的 §2.G 的離線半段**(輸出守衛的中斷協定、四級可聽度、兩個主張式的 chant 普查、凍結紅隊集的分級)、
 §2.H(猜拳對手建模)、§2.I(技能加載器)、
-§2.J(測試自身的健康度)、§2.K(Track C 在機量測)、**這一輪的 §2.L 的離線半段**(封閉工具登錄冊、六個結果狀態、egress 通道普查)與 §1(替身本身的證明)十三處:
+§2.J(測試自身的健康度)、§2.K(Track C 在機量測)、上一輪的 §2.L 的離線半段(封閉工具登錄冊、六個結果狀態、egress 通道普查)、§2.M(圖與普查互相對帳)、
+**這一輪的 §2.N**(休眠接縫普查——三個粒度的不對稱 × 一份具名理由的登錄冊,兩個方向都查)與 §1(替身本身的證明)十五處:
 
 | 檔案 | 案例數 | 對應 |
 |---|---|---|
@@ -27,7 +28,7 @@
 | `tests/test_guardrail_latency.py` | 31 | T-K3(L3 選到 7 個:6 個具名突變體 + 無突變對照) |
 | `tests/test_disclosure.py` | 39 | **T-E1**、**T-E3 的結構半段**、`/speech/say` 的鍵普查(讀者集合由 `tts_node` 的 import 遞移導出,含一個三跳的構造案例當正控)(L3 選到 9 個:8 個具名突變體 + 無突變對照) |
 | `tests/test_voices.py` | 33 | **T-E2**(引擎普查 × 兩條時長路徑的全交叉積 + `tts_node` 的唯一創造者;L3 選到 4 個:3 個具名突變體 + 無突變對照) |
-| `tests/test_meta.py` | 47 | T-J2(在沙箱子行程裡證明收集下限)、T-J5、**T-J7** |
+| `tests/test_meta.py` | 48 | T-J2(在沙箱子行程裡證明收集下限)、T-J5、**T-J7** |
 | `tests/test_context.py` | 43 | **T-C5 的注入半段**(真 `Retriever` 召回的敵意句子只出現在柵欄內、指令區對無記憶基線逐位元相同)、**提示組裝的部署路徑**(AST:節點自己不得持有提示文字、`system_text` 唯一來源、憲法載入不得被 `try` 包住);柵欄名的封閉集與 `data_region` 的碰撞拒絕(L3 選到 8 個:7 個具名突變體 + 無突變對照) |
 | `tests/test_push_branch.py` | 44 | **§7 的推送機制本身**(三方 sha、read-back、會說謊的 API 替身,以及**檔案模式**對工作樹可執行位元與 base tree 兩邊的比對;L3 選到 5 個:4 個具名突變體 + 無突變對照) |
 | `tests/test_entrypoints.py` | 29 | **T-J1 的發現半段**(AST:`__main__` 閘 or import 期工作;L3 選到 3 個:2 個具名突變體 + 無突變對照) |
@@ -46,6 +47,7 @@
 | `tests/test_audit_schema.py` | 28 | **T-C7(稽核紀錄的內容 schema)**(四個 kind 的欄位集合封閉、讀寫兩側必須同意 `TOMBSTONE_FIELDS`、正控由**真的生產者**驅動而非手寫 dict、普查逐一走訪呼叫點並把**讀不到的呼叫點寫成資料**;L3 選到 5 個:4 個具名突變體 + 無突變對照) |
 | `tests/test_doc_counts.py` | 23 | **T-J8**(L3 選到 6 個:5 個具名突變體 + 無突變對照) |
 | `tests/test_architecture.py` | 43 | **§2.M(圖與普查必須互相對帳)**(`docs/workflow.md` 的每個 Mermaid 區塊 × `infra/ros_census.py` 的 10 節點 / 21 主題 / 50 邊,兩個方向都查;`docs/architecture.svg` 的動畫在 `@supports` 之外不得先動起來;`infra/graph_gaps.tsv` 的類別封閉集與雙向律;版面幾何由 `infra/arch_render.py` 重建後逐位元比對,門檻 20 px 乾淨 / 21 px 必抓)(L3 選到 22 個:19 個具名突變體 + 3 個無突變對照——文件 / SVG / 缺口清單各一,因為三組突變體打的是三個不同的檢查族,共用一個對照會讓其中兩族的 harness 壞掉時仍然報綠;另有 7 個「一個版面一個缺陷」的手搭佈局與一個乾淨對照不掛 marker,它們不改原始碼,是餵給 `geometry_findings` 的輸入) |
+| `tests/test_wiring_census.py` | 37 | **§2.N(休眠接縫普查,兩個方向)**(`infra/wiring_census.py` 的三個粒度——檔案 `unreached` / 函式 `uncalled` / 參數 `unpassed`——對 `infra/dormant_seams.tsv` 的 42 列雙向對帳;類別封閉集,而且四類裡有三類是**由機器核對它的理由指向什麼**;兩個把儀器的洞寫成**差值**的案例:只靠可達性會漏掉 `assemble(recall=)`,只看檔案永遠看不見 `safety/guard.py` 裡四個休眠函式)(L3 選到 20 個:17 個具名突變體 + 2 個把洞寫成差值的 + 1 個把 `MODULE_LEVEL_ONLY` 翻掉必須 exit 3;另外 2 個無突變對照——真實樹一個、未突變副本一個——與 8 個 exit-3、3 個合成樹的邊界案例不掛 marker) |
 | `tests/test_measure_stats.py` | 23 | §2.K 兩支 harness 共用的統計(L3 選到 7 個:6 個具名突變體 + 無突變對照) |
 | `tests/test_deploy_path.py` | 26 | T-J1(3 個對照 + 4 個 exit-3 + 行為檢查)、T-J4(17 個具名突變體 + 一個把發現步驟的洞寫成差值的對照) |
 | `tests/test_redact_scan.py` | 22 | T-J6(8 個具名突變體 + 無突變對照 + 3 個 exit-3 對照)、**T-J10**(清單的兩個讀者必須同意它列了什麼;L3 多選到 2 個:1 個具名突變體 + 無突變對照)|
@@ -53,8 +55,8 @@
 | `tests/test_doubles.py` | 16 | §1 的替身與注入式時鐘,含「會說謊 vs 回聲」那對並列證明 |
 
 `test_meta.py` 的離線 import 掃描沒有一份模組清單:參數直接來自
-`TESTS_DIR.glob("*.py")`(`tests/test_meta.py:85`),所以今天 `tests/` 裡的 **35 個模組
-恰好對應 35 個案例**,S2.5 多出來的兩個是 `tests/test_disclosure.py` 與
+`TESTS_DIR.glob("*.py")`(`tests/test_meta.py:85`),所以今天 `tests/` 裡的 **36 個模組
+恰好對應 36 個案例**,S2.5 多出來的兩個是 `tests/test_disclosure.py` 與
 `tests/test_voices.py`,S3 多出來的一個是 `tests/test_profile.py`,S3.5 多出來的一個是
 `tests/test_salience.py`,S4 多出來的一個是 `tests/test_segment.py`,S4.5 多出來的一個是
 `tests/test_why.py`,S5 離線半段的鞏固那一邊多出來的一個是 `tests/test_consolidate.py`,
@@ -69,8 +71,11 @@ S7 一次加了兩個:守衛自己的 `tests/test_output_guard.py`,以及 `tests
 `/speech/say` 的鍵普查從 `tests/test_disclosure.py` 與 `tests/test_guard.py` 各自一份 AST
 走訪,搬成兩邊共用的一份,所以掃描變成 44;而這一輪的 S8 加的 `tests/test_tools.py`
 把它變成 45;而這一輪的 `tests/test_architecture.py` 把它變成 46,掃描的那一半同時從
-33 個模組變成 34 個;而 T-C7 的 `tests/test_audit_schema.py` 把它變成 47 與 35 個——這兩個數字沿著同一條 `glob` 一起動,而 §0 表格裡的 45 是我手打的,
-所以動的時候只有 T-J8 會出聲。**掃描的參數是 `*.py` 而不是 `test_*.py`**,
+33 個模組變成 34 個;而 T-C7 的 `tests/test_audit_schema.py` 把它變成 47 與 35 個;而這一輪
+的 `tests/test_wiring_census.py` 把它變成 **48 與 36 個**——這兩個數字沿著同一條 `glob` 一起動,而 §0 表格裡的那一格是我手打的,
+所以動的時候只有 T-J8 會出聲。**這一輪它真的出聲了**:新測試模組落地時我沒有先改文件,
+`infra/doc_counts.py` 就把 47、1474、284、35 四個過期的數字逐一報出來,而那正是這一條的
+全部價值——一個手打的數字加上一個導出的來源,等於一個會自己過期並且會被抓到的宣稱。**掃描的參數是 `*.py` 而不是 `test_*.py`**,
 這件事在這一輪剛好有價值:一個放在 `tests/` 裡的非測試輔助模組如果 import 了 `boto3`,
 它一樣會被這條掃描抓到。
 
@@ -83,7 +88,7 @@ S2.5 這一輪它還做了第二件事,而那件更有價值:T-E3 的瀏覽器�
 一行可審查的宣告,不是守衛裡一句「這裡不用看」的註解。
 
 上表「L3 選到 N 個」的數字全部由 `pytest -m mutation --collect-only -q` 逐檔印出
-(2026-08-25 量測,全套 284 個案例),不是手數的;T-J7 保證沒有第 285 個躲在標記外面,
+(2026-08-25 量測,全套 304 個案例),不是手數的;T-J7 保證沒有第 305 個躲在標記外面,
 而 **T-J8 保證上面每一個數字都是導出來的**——包括本段自己引用的那兩個。
 
 G 各節的**在機半段**(T-G1 的裁決→靜音 400 ms、T-G2 的首句差值 50 ms、T-G4 的真跑)、
@@ -1050,7 +1055,7 @@ L1 一改就紅,逼人重跑量測而不是讓舊數字繼續掛在那裡。
 | T-J1 | 部署路徑 | `infra/check_deploy.sh`:**執行** runner(`OAR_DRY=1`)而非解析它 | 啟動集合 == 回報集合;每條執行路徑存在或有活的 producer;每個 entrypoint 有人啟動或被明文豁免 | **已實作** |
 | T-J2 | 收集下限 | 逐模組收集數;掃檔數 | 任一模組收集 0 案例 → **非零退出**;`-k`/`-m` 時自動讓位 | **已實作** |
 | T-J3 | fixture 完整性 | 大小下限 + 行數下限 + sha256,登記在 `tests/fixtures.tsv` | 截斷、等長改寫、未登記的新檔,三者都紅 | **已實作** |
-| T-J4 | 突變 harness | 逐條套用具名突變體 + 無突變對照 | 每個突變體被**它該殺的那個檢查**殺掉;對照必須綠 | **已實作**;`pytest -m mutation` 在 2026-08-25 選到 **284 個案例**,分佈見檔首表格 |
+| T-J4 | 突變 harness | 逐條套用具名突變體 + 無突變對照 | 每個突變體被**它該殺的那個檢查**殺掉;對照必須綠 | **已實作**;`pytest -m mutation` 在 2026-08-25 選到 **304 個案例**,分佈見檔首表格 |
 | T-J5 | C daemon 陳舊 | 原始碼 mtime vs 執行檔 mtime;執行中行程的啟動時間 vs 執行檔 mtime | 執行檔不得舊於原始碼;執行中的行程不得舊於磁碟上的執行檔 | **已實作** |
 | T-J6 | 推送前脫敏 | `infra/redact_scan.py` 掃**即將成為 blob 的那份檔案清單**;8 個模式類各一個具名突變體 | 每個模式類被自己那條斷言抓到(比對**類名**而非只比 rc);無突變對照必須乾淨;清單缺失/為空/列到不存在的路徑 → **exit 3** | **已實作** |
 | T-J7 | **每個具名突變體都真的在 L3 裡** | 由 AST **推導**「突變體施加器」(改寫原始碼文字 `.replace` **且**把結果變回程式 `importlib`/`ast.parse`/`compile`),再要求呼叫它的測試帶 `mutation` marker | 0 個未標記;施加器所在模組數 ≥ 4 且突變測試數 ≥ 25(掃到太少視為偵測器瞎了,不是合規) | **實作時新增**(見下方) |
@@ -1396,15 +1401,115 @@ Mermaid 11 + Chromium 的記錄,而 T-M5 檢查的是「這份引用自己前後
 
 ---
 
+### N. 休眠接縫普查(`infra/wiring_census.py` 與 `infra/dormant_seams.tsv`)
+
+這一節存在的理由是一個量到的數字:**這個 repo 的五個承諾裡有四個只有 pytest 到得了**。
+`agent/context.py:261` 的 `assemble()` 收 `card` 與 `recall`,`agent/agent_node.py:83`
+兩個都沒傳,於是 `memory/recall.py`、`memory/consolidate.py`、`memory/salience.py`
+在執行期一行都不跑;`memory/segment.py`、`memory/erase.py`、`safety/output_guard.py`
+沒有任何節點載入。**而在這一節落地之前,五個閘全部是綠的**——因為每一個閘問的都是
+「寫下來的東西彼此一致嗎」,沒有一個問「跑起來的那個行程到得了這裡嗎」。
+
+所以這一節的主張跟前面每一節都不同種類:它不是「某個函式行為正確」,而是
+**「這棵樹裡哪些代碼是活的」,而那句話必須會過期**。它的形狀照 §2.M 的 T-M7
+(`graph_gaps.tsv`)抄:普查導出事實、TSV 帶具名理由、雙向都查、陳舊列本身是 finding。
+
+**三個粒度,而每一個都是因為前一個被量到看不見一個真實接縫才存在的:**
+
+| 粒度 | 名字 | 它抓到什麼前一個抓不到的 |
+|---|---|---|
+| 檔案 | `unreached` | 起點:沒有任何從 `infra/run_ec2.sh` 啟動的行程出發的呼叫路徑到得了這個檔案 |
+| 函式 | `uncalled` | `safety/guard.py` **每一回合都被載入並被呼叫**(`load_constitution`),所以任何檔案粒度的儀器永遠不會報它——而那個活著的檔案裡有**四個函式**在機器人裡沒有呼叫者 |
+| 參數 | `unpassed` | `assemble` 每一回合都跑,`recall.py` 的 909 行全部躲在 `if recall is not None` 後面。整個子系統的休眠是**一個被省略的引數**,不是一個沒被 import 的檔案 |
+
+| ID | 測試項 | 方法 | 通過標準 | 突變體 |
+|---|---|---|---|---|
+| T-N1 | 普查與登錄冊兩個方向 | `infra/wiring_census.py` 由 AST 導出三種不對稱,對 `infra/dormant_seams.tsv` 的 42 列對稱差 (D);`class` 封閉集 = `pending_stage` / `by_hand` / `test_only_by_design` / `defect`,而四類裡有三類是**核對理由指向什麼**而不是讀散文:`pending_stage` 與 `defect` 必須指名一個 `R<n>.<m>` 階段;`test_only_by_design` 必須指名一個**存在的** `tests/` 檔案;`by_hand` 分兩形,而是哪一形**由機器導出**——接縫自己在 `infra/standalone_entrypoints.tsv` 有列就必須指名自己,沒有列就必須指名那支工具的路徑 | 普查到的接縫沒有列 → 紅;有列而它已經不再不對稱 → **也紅**(接上的那天,刪掉那一列必須跟接線在同一個 PR);理由短到只是聳肩(< 60 字元)→ 紅;普查自己讀到 0 個檔案 / 啟動清單為空 / 檔案 parse 不動 / 列重複 → **exit 3,不是 exit 0** | `row_deleted`、`stale_row_for_a_reached_module`、`class_outside_the_closed_set`、`asymmetry_contradicts_the_census`、`reason_is_a_shrug`、`pending_stage_without_a_stage_id`、`defect_without_a_stage_id`、`by_hand_entrypoint_names_another_tool`、`by_hand_library_names_nothing`、`test_only_names_a_missing_test`、`test_only_names_no_test`、`uncalled_row_deleted` |
+| T-N2 | **儀器自己的洞寫成差值** | 同一棵樹跑兩次,拿掉一個儀器再跑 (D)。拿掉 `unpassed`:`assemble(recall=)` 消失,而普查仍然把 `agent/context.py` 算成 reached——**只靠可達性找不到它**。拿掉 `uncalled`:`safety/guard.py` 的四列全部變成陳舊列,而那個檔案一次都沒有被稱為 unreached | 兩個差值都必須出現。任何一個不出現,就表示那個儀器是裝飾品,而這個檔案不值得它的長度 | `reach_is_not_transitive`、`aliases_drop_the_bare_sibling`(`body/body_node.py` 用 `from gestures import …` 而全樹其他節點用 `from body import gestures`;少解一種寫法,一個**接好的**模組就讀成死的——這是真的正控,不是編出來的)、`tests_count_as_callers`、`uncalled_instrument_removed`、`uncalled_is_only_about_its_own_file`,加上 `test_flipping_module_level_only_exits_3_not_0`——它不在具名突變體表裡,因為它改的不是一個檢查而是普查的**範圍**,而範圍變了普查必須拒絕出結論(exit 3)而不是報一個更小的答案 |
+
+L3 從這一節選到 **20 個案例:17 個具名突變體 + 2 個把儀器的洞寫成差值的 + 1 個翻掉
+`MODULE_LEVEL_ONLY` 必須 exit 3 的**。另外 **2 個無突變對照**(真實樹一個、未突變副本一個)
+與 8 個 exit-3、3 個合成樹的邊界案例不掛 `mutation` marker。
+
+**兩個對照而不是一個**,理由跟 §2.M 的三個對照一樣但更具體:真實樹的對照證明
+「今天這 42 列是對的」,未突變副本的對照證明「複製 + 突變這套機制本身沒有把樹弄壞」。
+只留前者,突變機制壞掉時每個突變體都會「被殺」而全節報綠。
+
+**這一節有一個底線是檔案數,而不是接縫數**:`test_the_census_reads_a_useful_number_of_files`
+要求普查至少讀到 35 個 `.py`。接縫數**故意沒有底線**——R1 的每一個 PR 都應該讓它變小,
+在那裡放一個底線等於因為接線成功而報紅。
+
+**這一節沒有測到什麼:**「到得了」是**呼叫圖上的可達性**,不是訊息真的流過去。
+一個模組被 import、被呼叫,不代表它在真機上被走到——那屬於 L4,而 L4 擋在安全群組的
+`/32` 上。反方向也要說清楚:普查說一個檔案 unreached,證明的是**這棵樹裡沒有靜態呼叫
+路徑**,不是它永遠不會被執行;`importlib` 或字串反射會繞過它,而這棵樹裡今天沒有那種寫法。
+
+**兩個邊界是在合成樹上測的,而那是一句量到的覆蓋率陳述,不是偏好。** 磁碟上兩個
+`_` 開頭的 keyword-only 參數(`erase.delete(_after_step=)` 與
+`store.Store.__init__(_allow_ephemeral=)`)一個在普查報 unreached 的檔案裡、一個在被
+跳過的方法上,所以**這兩條 skip 在真實樹上一次都沒有被走到**。
+一條沒有東西走到的邊界,是一條沒有人檢查過的邊界。
+
+**這一節的產物包含兩列 `defect`,而那是寫它的收益。** `safety/guard.py` 的
+`gesture_findings()` 與 `spoken_text()` 不只是沒接上:`agent/agent_node.py:265-269`
+用自己的 inline regex 把同兩條規則實作了第二遍,而**活著的那一份沒有白名單檢查**。
+今天沒有東西不安全地到得了致動器,只因為 `body/body_node.py` 做
+`GESTURES.get(name)` 而把不認識的標籤靜默丟掉——一個在下游的、意外的、從不進稽核的
+containment,而且那個檔案零測試。`tests/test_wiring_census.py` 把這兩列釘在那兩段
+inline regex 與那句 `GESTURES.get(name)` 上,所以這個重複**不能只在一邊被靜默解掉**。
+
+---
+
 ## 3. 分層執行
 
-| 層 | 內容 | 何時 | 需要 |
-|---|---|---|---|
-| **L1** 單元 + property | A、B、C、D1–D4、**D6、D7**、E1–E2、H1、H3、H5、**H6(結構閘)**、I、J1–J3、J5、**J7**、**M1–M9** | 每次存檔 | 筆電,無網路 |
-| **L2** 回放 | B3、F1、F4、F6、H2、H4 | 每次 PR | 筆電 + 凍結 fixture |
-| **L3** 突變 | J4(全部具名突變體 + 無突變對照),**「全部」這個詞由 J7 守住** | 每次 PR | 筆電 |
-| **L4** 在機量測 | F2、F3、F5、G1、G2、D5、**§2.K 的 Track C 五項(K3/K5 已做,K1/K2/K4 被安全群組擋住)** | 手動,改動相關子系統時 | EC2 + Bedrock,見下 |
-| **L5** 人工 UAT | E3(瀏覽器)、**M5/M6 的真瀏覽器半段**(圖真的會動、`prefers-reduced-motion` 真的靜下來)+ §4 檢查表 | 開蓋時 | 人 |
+| 層 | 內容 | 何時 | 預算 → 實測 | 需要 |
+|---|---|---|---|---|
+| **L1** 單元 + property | A、B、C、D1–D4、**D6、D7**、E1–E2、H1、H3、H5、**H6(結構閘)**、I、J1–J3、J5、**J7**、M1–M9、**N1** | 每次存檔 | **< 30 s → 量到 90 s(超標 3.0×)** | 筆電,無網路 |
+| **L2** 回放 | B3、F1、F4、F6、H2、H4 | 每次 PR | 沒有獨立預算,也**量不出來**:沒有 `l2` marker,所以它跟 L1 一起跑在同一個 90 s 裡 | 筆電 + 凍結 fixture |
+| **L3** 突變 | J4(全部具名突變體 + 無突變對照)、**N2**,**「全部」這個詞由 J7 守住** | 每次 PR | 沒寫過預算 → 量到 **143 s** | 筆電 |
+| **L4** 在機量測 | F2、F3、F5、G1、G2、D5、**§2.K 的 Track C 五項(K3/K5 已做,K1/K2/K4 被安全群組擋住)** | 手動,改動相關子系統時 | 預算是**錢**不是秒(見下),而它也超標 | EC2 + Bedrock,見下 |
+| **L5** 人工 UAT | E3(瀏覽器)、**M5/M6 的真瀏覽器半段**(圖真的會動、`prefers-reduced-motion` 真的靜下來)+ §4 檢查表 | 開蓋時 | 人的時間,沒有量 | 人 |
+
+**這一欄是補回來的,而它為什麼曾經被刪掉本身就是要記下來的事。** 前一版把預算欄整欄
+拿掉,而一個**被刪掉的**預算跟一個**沒達成的**預算,在文件上長得一模一樣——差別是後者
+還會讓下一個人知道要做什麼。所以現在寫的是超標,不是空白。
+
+**2026-08-25 在這台 MacBook 上量到的**(每一支都 `rc 0`,無並發負載,
+CPython **3.12.12** / pytest **9.0.3**,每個數字都跑過兩次所以寫的是區間):
+`pytest -m "not mutation"` = **90 s**(90、90.84)、
+`pytest -m mutation` = **136–143 s**、整套 `pytest` = **205–216 s**。
+30 s 的預算是計劃書在 1474 個案例之前寫的,今天是 1512 個案例,**超標 3.0×**。
+
+**90 + 143 = 233 > 205,而那不是量錯,是這一輪剛好把 `pytest.ini` 寫下的那件事量到了:**
+分開跑會付兩次 Gatekeeper 評估,整套跑只暖一次快取,所以**部分之和大於全體**。
+一份把三個數字加起來當總時間的文件,會得出一個比實際慢將近半分鐘的預算。
+
+**直譯器要寫下來,而這一輪剛好有一個理由。** 量測進行到一半的時候,homebrew 把
+`/opt/homebrew/bin/python3` 這個 symlink 重指到 **3.14**,而那個直譯器**沒有裝 pytest** ——
+於是下一次 `python3 -m pytest` 是 `No module named pytest`,而不是一個紅色的測試。
+這棵樹裡每一個閘都是 shell 出去呼叫 `python3`,所以「哪一個直譯器」不是環境細節,
+是這些數字與這些 `rc 0` 的一部分:上面的秒數與下面指令區塊裡的每一個閘,全部是在
+`/opt/homebrew/opt/python@3.12/libexec/bin` 排在 `PATH` 前面的情況下重跑過的。
+一份只寫「在筆電上跑」的文件,沒有辦法區分「套件變慢了」與「`python3` 換人了」。
+
+**這個數字對負載極度敏感,而那件事必須跟數字寫在一起。** 同一支
+`pytest -m "not mutation"` 在有並發負載的機器上讀到 **268 s** ——比整套還久。
+那量到的是機器,不是套件——跟 §1 記下的那件事同一個成因:一個睡覺的替身單獨跑綠,
+在整套一起跑的時候把 30 ms 的間隔讀成 **46.0 ms**,而修法是注入時鐘而不是放寬容忍。
+所以上面每一個秒數都附著「背對背、無並發負載」這個
+條件,而**沒有任何測試斷言執行時間**。
+
+**超標的成因是可以指名的,不是「測試變多了」這句廢話:** L3 幾乎全部的時間花在 macOS
+對 `~/Downloads` 底下每次 script exec 的 Gatekeeper 評估上(所以同一組測試在同一台機器
+上會落在區間而不是點值)。而 L1 這一輪的增量是**單獨量過的**:同一台機器、同一個狀態、
+背對背兩次,拿掉 `tests/test_wiring_census.py` 是 **81.78 s**,加上它是 **90.84 s** ——
+邊際 **+9.06 s**,全部由這一個模組貢獻,因為這一輪只加了它。
+成因也是知道的:37 個案例裡有 28 個要**複製整棵樹再跑一次子行程普查**,因為突變體必須
+作用在一棵可以被改寫的樹上,而 in-process 的替身會讓「普查讀自己的原始碼」這件事失去意義。
+**這是一個已經付掉的、知道價錢的成本**,不是一句「測試變多了」。
+
+**R3 會讓這張表的成員由 marker 導出而不是手寫**,那時 L2 才會有自己的秒數;
+在那之前,L2 那一格寫的是「量不出來」,不是一個猜的數字。
 
 L4 的成本要更新:計劃書寫「Track C 合計 < $1」,而實際已經超過。
 已跑的部分是 **6 次 M1 呼叫 + 120 次串流呼叫(maxTokens 256)+ 66 次 converse(maxTokens 900)
@@ -1422,10 +1527,15 @@ pytest -m mutation           # 只跑 L3
 infra/check_deploy.sh        # T-J1 單獨跑,必須印 0 findings
 ```
 
-實測時間與環境見 `pytest.ini` 的 `mutation` marker 說明(跟 harness 同一個檔案,
-所以它不會跟代碼脫節)。那裡寫的是**區間不是點值**:L3 幾乎全部的時間花在 macOS 對
-`~/Downloads` 下每次 script exec 的 Gatekeeper 評估上,而那個評估有快取,
-所以同一組測試在同一台機器上會落在 51–84 秒之間。
+L3 為什麼是雙峰的、環境是什麼,見 `pytest.ini` 的 `mutation` marker 說明(跟 marker
+同一個檔案,所以它不會跟代碼脫節)。那裡寫的是**區間不是點值**:L3 幾乎全部的時間花在
+macOS 對 `~/Downloads` 下每次 script exec 的 Gatekeeper 評估上,而那個評估有快取,
+所以「部分之和大於全體」在這裡是正常的,不是量錯。
+兩組數字的**分母不同,不能互相取代**,所以兩組都留著:上面那一欄的 90 s / 143 s 是
+2026-08-25 對**整個層**(1512 個案例、其中 304 個突變體)的量測;`pytest.ini` 裡
+2026-08-22 那組是對**一個子集**(145 個案例、其中 18 個突變體)的量測,它存在的目的是
+展示雙峰與快取效應,不是報告這一層要跑多久。把後者當成前者,會得出「L3 只要 60 秒」
+這個今天差了 2.4 倍的結論。
 
 **沒有任何測試斷言執行時間。** 跑得慢是筆電慢,不是失敗——一個會因為機器忙而變紅的
 測試,兩天內就會被加上 skip。

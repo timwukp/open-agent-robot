@@ -1,0 +1,119 @@
+# open-agent-robot — every python seam in this tree that only `pytest` reaches.
+#
+# `infra/wiring_census.py` derives three asymmetries from the source, at three
+# granularities, and each exists because the one before it was measurably blind to a
+# real seam in this tree:
+#
+#   unreached  (file) no call path from any process infra/run_ec2.sh launches arrives
+#              at this file.
+#   uncalled   (function) a public module-level function in a file that IS reached,
+#              which no production file calls at all. safety/guard.py is loaded on
+#              every turn for load_constitution, and four functions in that same live
+#              file have no caller in the robot.
+#   unpassed   (parameter) a keyword parameter of a function that IS called across
+#              files, which nothing outside tests/ supplies. agent/context.py:assemble
+#              runs on every turn and every call into recall inside it sits behind
+#              `if recall is not None`.
+#
+# Only the outermost asymmetry gets a row: two rows for one cause means one of them
+# goes stale silently.
+#
+# The asymmetry itself is machine-derived. Whether a given asymmetry is *acceptable* is
+# a judgement, so it is a reviewable line with a stated reason — the same shape as
+# infra/graph_gaps.tsv, infra/standalone_entrypoints.tsv and infra/generated_paths.tsv,
+# and for the same reason: an excuse living inside the guard is where the next
+# unreviewed exemption gets added.
+#
+# The census checks this manifest in both directions. A censused seam with no row is a
+# finding. A row whose seam is no longer asymmetric is also a finding — it is the row
+# that must be deleted in the same PR that wires it, and a stale row would silently
+# excuse the next seam arriving with the same name.
+#
+# `class` is a closed set, and for three of the four a machine checks what the reason
+# names rather than reading it as prose:
+#   pending_stage        the caller belongs to a stage that has not landed. The reason
+#                        must name an R<n>.<m> stage id from docs/plan.md, and the row
+#                        is deleted in the PR that wires it.
+#   by_hand              reached only from a tool or harness someone runs by hand, and
+#                        which of two shapes applies is derived, not declared. If the
+#                        seam has its own row in infra/standalone_entrypoints.tsv it IS
+#                        the tool, and the reason must name itself. Otherwise it is a
+#                        library of one, and the reason must name that tool's path. The
+#                        weaker rule — name *any* path with a row there — would accept
+#                        infra/arch_render.py excused by a claim about
+#                        memory/rank_harness.py, which reads fine and is a lie.
+#   test_only_by_design  an injection, tuning or declaration-checking seam that exists
+#                        for tests to drive. The reason must name a tests/ file, and
+#                        that file must exist. The eight functions in this class all
+#                        grade a table written down in this repo rather than runtime
+#                        data, so a test is the only caller they could have.
+#   defect               not merely unwired but wrong as written — a second
+#                        implementation of a rule the dormant function owns. Like
+#                        pending_stage the reason must name the stage that fixes it, so
+#                        the class cannot become a parking lot.
+#
+# There is deliberately no `separate_process` class. speech/yue_server.py is the case
+# that would want one, but the runner launches it, so reachability starts at it and it
+# is never censused. A class that cannot occur is dead vocabulary.
+#
+# **The two `defect` rows are the finding this file was worth writing for.** An earlier
+# draft of this header said the class "should stay empty over time". It was populated on
+# the day the third instrument was added, by safety/guard.gesture_findings and
+# safety/guard.spoken_text: agent/agent_node.py:265-269 re-implements both rules with
+# inline regexes, so the tag vocabulary has two implementations and the live one is the
+# copy with no whitelist check. Nothing unsafe reaches an actuator today, but only
+# because body_node does GESTURES.get(name) and drops an unknown label silently —
+# containment that is downstream, accidental, never audited, and in a file with zero
+# tests. An empty class would have been a nicer sentence and a false one.
+#
+# **What this manifest does NOT say, stated because the omission is load-bearing.**
+# memory/recall.py, memory/consolidate.py and memory/salience.py have no *file* row:
+# they are reached in the call graph — agent/context.py calls into recall, recall calls
+# consolidate and salience — but only from inside `assemble`'s `if recall is not None`
+# branch, and agent_node passes None. Their dormancy as files is one seam,
+# `assemble(recall=)`. What they DO have is function rows, because being reachable in
+# principle and having a caller are different facts, and stamp() has neither.
+#
+# Columns (tab-separated):  seam <TAB> asymmetry <TAB> class <TAB> reason
+agent/context.py::assemble(card=)	unpassed	pending_stage	R1.1 wires it. memory_node already publishes /memory/profile transient_local and graph_gaps.tsv carries the topic half of this same gap; the missing half is agent_node subscribing and forwarding the card into prompt assembly. Not a one-liner: assemble runs once in __init__ while the card arrives asynchronously, so R1.1 has to decide what happens to a turn that beats the card
+agent/context.py::assemble(recall=)	unpassed	pending_stage	R1.4 wires it, and this single seam is what makes memory/recall.py, memory/consolidate.py and memory/salience.py dead at runtime — 1757 production lines behind one omitted argument. agent_node needs a /memory/recall client on a worker thread with a 150 ms deadline; it must not use spin_until_future_complete, which would spin a second executor against the single spin in agent_node.py
+agent/context.py::assemble(hit_cap=)	unpassed	test_only_by_design	Driven by tests/test_context.py, which passes hit_cap to assert the refusal on a cap below 1. Production deliberately takes the default: HIT_CAP is recall.TOP_K, so the prompt's cap and the ranker's cap are one number, and a second tunable at the call site would let them drift silently
+memory/segment.py	unreached	pending_stage	R1.3 wires it. memory_node subscribes to nothing today (its own docstring says so), so no episode is ever cut. The 45 s silence rule has to be timed by memory_node itself because asr_node publishes nothing during silence, which means there is no message whose absence a subscriber could notice
+memory/erase.py	unreached	pending_stage	R1.5 wires it. safety/guard.forget_request already recognises a deletion request (T-D7) and nothing consumes the recognition, so the robot can be asked to forget and will not. The confirmation utterance must be published after erase.delete returns, or the robot promises something that has not happened
+safety/output_guard.py	unreached	pending_stage	R1.6 wires it, last in the batch because it is the only one that can be structurally correct and still fail on real latency: the measured p50 is 749 ms, so a serial call would blow the conversational beat. The verdict routes through the existing /speech/interrupt to T_FLUSH rather than a new topic
+memory/rank.py	unreached	by_hand	The S6 research arm, exercised by memory/rank_harness.py, which has a row in infra/standalone_entrypoints.tsv while this file has none of its own. It is deliberately not in the robot: its three arms are an offline ablation whose conclusion is asserted against docs/evidence/s6/rank-ablation.json, and the ranker the robot uses is recall's own
+memory/rank_harness.py	unreached	by_hand	Run by hand with --root/--queries; memory/rank_harness.py has its own row in infra/standalone_entrypoints.tsv. Its four exit codes and its JSON output are what tests/test_rank.py asserts against, so the harness is covered by assertions even though nothing calls into it
+game/opponent_harness.py	unreached	by_hand	Run by hand for the offline T-H2..H4 evaluation of game/opponent.py; game/opponent_harness.py has its own row in infra/standalone_entrypoints.tsv. Writes docs/evidence/track-b/opponent-h2.json, which tests/test_opponent.py asserts against
+safety/token_cost_harness.py	unreached	by_hand	Run by hand against Bedrock for T-K5 and T-F5; safety/token_cost_harness.py has its own row in infra/standalone_entrypoints.tsv. Writes docs/evidence/track-c/{constitution-tokens,effort-latency}.json, which tests/test_token_cost_harness.py asserts against
+safety/guardrail_latency_harness.py	unreached	by_hand	Run by hand with --guardrail-id for the T-K3 apply_guardrail latency measurement in our own region; safety/guardrail_latency_harness.py has its own row in infra/standalone_entrypoints.tsv. Writes docs/evidence/track-c/guardrail-latency.json
+safety/output_guard_harness.py	unreached	by_hand	The T-G4 red-team runner over tests/fixtures/redteam.jsonl, run by hand on the instance; safety/output_guard_harness.py has its own row in infra/standalone_entrypoints.tsv. Its four exit codes distinguish an escape from an inability to claim coverage
+safety/measure_stats.py	unreached	by_hand	The only median, percentile and bootstrap CI implementation, imported by safety/token_cost_harness.py and safety/guardrail_latency_harness.py, both of which have rows in infra/standalone_entrypoints.tsv. tests/test_measure_stats.py asserts that both harnesses import from it rather than growing a second copy
+infra/ros_census.py	unreached	by_hand	The one reader of the node and topic graph, imported by infra/arch_render.py and by tests/test_architecture.py; infra/arch_render.py has a row in infra/standalone_entrypoints.tsv. It has no __main__ of its own, so it is a library of a by-hand tool rather than an entrypoint
+infra/arch_render.py	unreached	by_hand	Regenerates docs/architecture.svg from the census, run by hand before a push; infra/arch_render.py has its own row in infra/standalone_entrypoints.tsv. tests/test_architecture.py rebuilds and compares the committed SVG byte for byte, so drift is caught even though no process calls it
+infra/wiring_census.py	unreached	by_hand	This census itself, run by hand before every push and by tests/test_wiring_census.py; infra/wiring_census.py has its own row in infra/standalone_entrypoints.tsv. It reads its own source like every other file in the tree, which is why it needs a row here rather than an exemption inside itself
+infra/doc_counts.py	unreached	by_hand	Cross-checks the case and mutant counts quoted in docs/test-design.md and both READMEs against pytest --collect-only, run by hand before a push; infra/doc_counts.py has its own row in infra/standalone_entrypoints.tsv
+infra/redact_scan.py	unreached	by_hand	The redaction scan over an explicit push file list, run by hand before every Git Data API push; infra/redact_scan.py has its own row in infra/standalone_entrypoints.tsv. A zero-file scan exits non-zero there, for the same reason this census refuses an empty tree
+infra/entrypoints.py	unreached	by_hand	The AST entrypoint discovery that check 8 of infra/check_deploy.sh consumes; infra/entrypoints.py has its own row in infra/standalone_entrypoints.tsv. It is launched by the guard rather than by the runner, which is why check_deploy.sh's own entrypoint rule exempts it there
+infra/day0_measure.py	unreached	by_hand	The one-off day-0 measurement script, run by hand on the instance; infra/day0_measure.py has its own row in infra/standalone_entrypoints.tsv. Its numbers live in docs/day0-measurements.md, and it is the one harness with no verdict function — noted in the R3 convergence work rather than here
+skills/measure_l1_tokens.py	unreached	by_hand	The one-off T-I1 token measurement against Bedrock, run by hand; skills/measure_l1_tokens.py has its own row in infra/standalone_entrypoints.tsv. Its result is pasted into tests/test_skills_loader.py rather than read from a file
+web/stub_ws_server.py	unreached	by_hand	The T-E3 browser walk-through's stub gateway (layer L5), run by hand and never deployed; web/stub_ws_server.py has its own row in infra/standalone_entrypoints.tsv. It lives outside tests/ because tests/test_meta.py forbids a network import there
+.push/push_branch.py	unreached	by_hand	The Git Data API pusher for this repo's never-git-push rule, run by hand with --base/--branch; .push/push_branch.py has its own row in infra/standalone_entrypoints.tsv. tests/test_push_branch.py requires it to appear in the tree it produces, so the mechanism in that tree can be reviewed
+agent/context.py::audit_payload()	uncalled	pending_stage	R1.1 wires it, because its docstring already names its caller: "the dict agent_node hands to guard.audit_record for a composed turn". agent_node calls neither today, so a composed turn leaves no audit record at all. This is the seam PR #27 declared the chat audit field set ahead of, deliberately: audit.jsonl is not erasable, so the field set is free to mandate exactly once, before the first writer exists
+memory/salience.py::stamp()	uncalled	pending_stage	R1.3 wires it, and its own docstring is the reason this row is load-bearing: "Attach a score and its formula id to record. The only way to attach one." No production file calls it, so every record the robot could write today would carry no salience at all, and memory/salience.py's 335 lines decide nothing
+memory/consolidate.py::consolidate()	uncalled	pending_stage	R1.3 wires it. It is the step that turns candidates into facts under the N >= 2 independent-episodes rule, so with no caller the semantic layer of "remembers you" never mints anything and recall can only ever return raw turns
+memory/consolidate.py::known_ids()	uncalled	pending_stage	R1.3 wires it alongside consolidate(). It derives the resolvable episode-id set from the episodes themselves rather than from a written-down list, which is the repo's own rule quoted at memory/consolidate.py:401 — and a derivation nobody calls is a written-down list waiting to happen
+memory/recall.py::deletion_findings()	uncalled	pending_stage	R1.5 wires it. It is the checker for whether a recall result still proves an episode is gone, so it belongs on the far side of erase.delete: the confirmation utterance R1.5 must publish after deletion is only honest if something verified the deletion, and this is that something
+memory/store.py::unlock_for_s5()	uncalled	pending_stage	R1.1 wires it. Four separate modules quote it as "the one sanctioned way past the lock" on profile snapshot writes (memory/profile.py:19, :175, :209, memory/erase.py:706), so the write half of the profile card is locked shut and the named key is never turned by anything in the robot
+safety/guard.py::forget_request()	uncalled	pending_stage	R1.5 wires it, and the plan's own note that "T-D7 already exists and nothing consumes the recognition" is exactly this row, derived rather than remembered. The robot can be asked to forget and will not: the recogniser returns a target, and no caller means the request dies in the function that understood it
+safety/guard.py::clamp_reply()	uncalled	pending_stage	R1.6 wires it. It returns (text, findings) and its docstring says the findings feed the audit, so with no caller the spoken reply is unbounded and every finding it would have raised is never recorded. agent_node publishes resp text straight to /speech/say
+safety/guard.py::gesture_findings()	uncalled	defect	R1.6 fixes it, and this is a duplicate rule rather than a missing call: agent_node.py:265 re-implements the tag scan inline as re.findall(r"\[gesture:(\w+)\]") and publishes every match to /body/gesture with no whitelist check, while this function exists to split them into (accepted, findings-for-rejected). Containment today is accidental and downstream: body_node does GESTURES.get(name), so an unknown label is silently dropped at the actuator and the rejection is never a finding, never audited, and body_node has zero tests
+safety/guard.py::spoken_text()	uncalled	defect	R1.6 fixes it, same duplication as gesture_findings: agent_node.py:269 strips action tags with its own inline re.sub(r"\[(?:gesture:\w+|game:start)\]"), while this function is documented as "the reply with action tags removed - what actually goes to TTS". Two implementations of one rule, and the live one is the copy no test of this repo's tag vocabulary reads
+agent/tools.py::reconcile()	uncalled	pending_stage	R6.1 wires it, and R6 is the stage this row forces docs/plan.md to name: the tool loop's on-robot half (S8's in-machine side - MCP, OAuth, Strands), which no stage of R0-R5 touches. reconcile compares a live server offer set against this repo's closed declaration, so it can only run once something actually connects to a server
+agent/tools.py::spec_findings()	uncalled	test_only_by_design	Driven by tests/test_tools.py. It reads the declared REGISTRY and the resident tool set and returns findings rather than raising, so the first disagreement does not hide the rest - a shape whose caller is a test by design, because what it checks is a declaration in this repo and not runtime data
+agent/tools.py::reachability_findings()	uncalled	test_only_by_design	Driven by tests/test_tools.py. It checks where a declared model_reachable flag disagrees with what REGISTRY implies, which is a contradiction between two written-down tables; there is no runtime state to read, so a test is the only caller it can have
+agent/tools.py::egress_findings()	uncalled	test_only_by_design	Driven by tests/test_tools.py. It names every model-reachable channel with no enforcer running on it, derived from the declared egress table, so like the other two findings functions in this file its subject is the repo's own declarations
+memory/salience.py::weight_findings()	uncalled	test_only_by_design	Driven by tests/test_salience.py. It takes no arguments at all - it checks the module's declared weights, and its docstring says the empty list is the only passing value - so there is nothing a runtime caller could pass it that a test cannot
+memory/consolidate.py::provenance_findings()	uncalled	test_only_by_design	Driven by tests/test_consolidate.py as design item T-C3. It grades a fact set as provenance against the episode ids that produced it; the runtime half of that check is deletion_findings, which has its own row and its own stage
+memory/recall.py::coverage_findings()	uncalled	test_only_by_design	Driven by tests/test_recall.py, and also read by tests/test_erase.py and tests/test_architecture.py. It names artifacts in a store root that no retrieval path reads, which is a claim about this repo's retrieval design rather than about a particular store
+game/rps.py::hand_vocabulary()	uncalled	test_only_by_design	Driven by tests/test_game_wiring.py. It derives every gesture label perception/hand_node.classify can return by reading that file's source, so the vocabulary cannot be written down twice and drift; a source-reading derivation belongs to the gate, not to the running game
+memory/store.py::goal_census()	uncalled	test_only_by_design	Driven by tests/test_why.py. It returns records per goal with every declared member present, zeros included, which is the shape that makes an absent goal distinguishable from a goal with no records - a census for assertions rather than a query the robot makes

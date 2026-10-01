@@ -1,4 +1,4 @@
-"""The two drawings, checked against the code they draw (§6.2 item T-L1..T-L9).
+"""The two drawings, checked against the code they draw (§6.2 item T-M1..T-M9).
 
 `docs/architecture.svg` draws the standing shape of the ROS 2 graph and
 `docs/workflow.md` draws the sequences through it. Both are hand-authored claims about
